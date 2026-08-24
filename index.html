@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#efebe4">
+  
+  <title>A Role Play</title>
+  
+  <link rel="stylesheet" href="css/style.css">
+  
+  <!-- PWA: Manifest -->
+  <link rel="manifest" href="manifest.json">
+  
+  <!-- PWA: Suporte a ícones no iOS -->
+  <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+</head>
+<body>
+  <main id="app"></main>
+  
+  <!-- Seu Router Original -->
+  <script type="module" src="js/router.js"></script>
+
+  <!-- PWA: Registro do Service Worker -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then((registration) => {
+            console.log('ServiceWorker registrado com sucesso no escopo: ', registration.scope);
+          })
+          .catch((error) => {
+            console.log('Falha ao registrar o ServiceWorker: ', error);
+          });
+      });
+    }
+  </script>
+</body>
+</html>
