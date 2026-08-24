@@ -1,0 +1,336 @@
+/* =========================================================
+   RPG TEXTUAL
+   CENTRAL DE CORES + BASE GLOBAL
+   IDENTIDADE MEDIEVAL
+   ========================================================= */
+
+
+/* =========================================================
+   PALETA PRINCIPAL
+   ========================================================= */
+
+:root {
+
+  /* -------------------------------------------------------
+     FUNDOS
+     ------------------------------------------------------- */
+
+  --color-bg-main: #1b1410;
+  --color-bg-secondary: #261b15;
+  --color-bg-surface: #33241b;
+  --color-bg-surface-light: #443125;
+
+
+  /* -------------------------------------------------------
+     TEXTOS
+     ------------------------------------------------------- */
+
+  --color-text-primary: #ead9b8;
+  --color-text-secondary: #bda987;
+  --color-text-muted: #8e7960;
+  --color-text-inverse: #1b1410;
+
+
+  /* -------------------------------------------------------
+     BORDEAUX / SANGUE
+     ------------------------------------------------------- */
+
+  --color-bordeaux-dark: #4a1018;
+  --color-bordeaux: #6e1f2a;
+  --color-bordeaux-light: #8f2d3a;
+  --color-bordeaux-bright: #a83b47;
+
+
+  /* -------------------------------------------------------
+     MARROM / MADEIRA
+     ------------------------------------------------------- */
+
+  --color-brown-dark: #24150f;
+  --color-brown: #4a2f22;
+  --color-brown-light: #6b4632;
+
+
+  /* -------------------------------------------------------
+     BEGE / PERGAMINHO
+     ------------------------------------------------------- */
+
+  --color-beige-dark: #9b825e;
+  --color-beige: #c7ad80;
+  --color-beige-light: #e1cda5;
+  --color-parchment: #eadbbd;
+
+
+  /* -------------------------------------------------------
+     DOURADO
+     ------------------------------------------------------- */
+
+  --color-gold-dark: #8a682c;
+  --color-gold: #b28a3e;
+  --color-gold-light: #d0ad5f;
+  --color-gold-bright: #e2c77c;
+
+
+  /* -------------------------------------------------------
+     BORDAS
+     ------------------------------------------------------- */
+
+  --color-border-dark: #3d291e;
+  --color-border: #634633;
+  --color-border-light: #8a684d;
+  --color-border-gold: #8a682c;
+
+
+  /* -------------------------------------------------------
+     ESTADOS
+     ------------------------------------------------------- */
+
+  --color-success: #587342;
+  --color-warning: #a97832;
+  --color-danger: #7e2029;
+  --color-info: #526b76;
+
+
+  /* -------------------------------------------------------
+     SOMBRAS
+     ------------------------------------------------------- */
+
+  --color-shadow: #000000;
+
+
+  /* =======================================================
+     ALIASES SEMÂNTICOS
+     ======================================================= */
+
+  --bg-primary: var(--color-bg-main);
+  --bg-secondary: var(--color-bg-secondary);
+  --bg-surface: var(--color-bg-surface);
+  --bg-surface-light: var(--color-bg-surface-light);
+
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-muted);
+  --text-inverse: var(--color-text-inverse);
+
+  --accent-primary: var(--color-bordeaux);
+  --accent-primary-dark: var(--color-bordeaux-dark);
+  --accent-primary-light: var(--color-bordeaux-light);
+  --accent-primary-bright: var(--color-bordeaux-bright);
+
+  --accent-secondary: var(--color-gold);
+  --accent-secondary-dark: var(--color-gold-dark);
+  --accent-secondary-light: var(--color-gold-light);
+  --accent-secondary-bright: var(--color-gold-bright);
+
+  --accent-brown: var(--color-brown);
+  --accent-brown-dark: var(--color-brown-dark);
+  --accent-brown-light: var(--color-brown-light);
+
+  --border-color: var(--color-border);
+  --border-color-light: var(--color-border-light);
+  --border-color-dark: var(--color-border-dark);
+  --border-color-gold: var(--color-border-gold);
+
+  --success: var(--color-success);
+  --warning: var(--color-warning);
+  --danger: var(--color-danger);
+  --info: var(--color-info);
+
+  --shadow-color: var(--color-shadow);
+
+
+  /* =======================================================
+     UTILITÁRIOS VISUAIS
+     ======================================================= */
+
+  --focus-ring: rgba(178, 138, 62, 0.25);
+
+  --shadow-soft:
+    0 2px 8px rgba(0, 0, 0, 0.22);
+
+  --shadow-medium:
+    0 4px 14px rgba(0, 0, 0, 0.30);
+
+  --shadow-strong:
+    0 8px 24px rgba(0, 0, 0, 0.40);
+}
+
+
+/* =========================================================
+   RESET GLOBAL
+   ---------------------------------------------------------
+   Isto não define o visual das views.
+   Apenas remove os estilos padrão do navegador.
+   ========================================================= */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+
+/* =========================================================
+   HTML / BODY
+   ========================================================= */
+
+html {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+
+body {
+  width: 100%;
+  min-width: 100%;
+  height: 100%;
+  min-height: 100vh;
+
+  margin: 0;
+  padding: 0;
+
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+
+  overflow-x: hidden;
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+
+/* =========================================================
+   APLICAÇÃO
+   ---------------------------------------------------------
+   O #app ocupa toda a área disponível.
+   As views são responsáveis pelo próprio layout.
+   ========================================================= */
+
+#app {
+  width: 100%;
+  min-width: 100%;
+  min-height: 100vh;
+
+  margin: 0;
+  padding: 0;
+}
+
+
+/* =========================================================
+   ELEMENTOS INTERATIVOS
+   ========================================================= */
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+
+/* =========================================================
+   LINKS
+   ========================================================= */
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+
+/* =========================================================
+   BOTÕES
+   ---------------------------------------------------------
+   Apenas remove o estilo padrão do navegador.
+   A aparência dos botões pertence às views.
+   ========================================================= */
+
+button {
+  border: 0;
+  background: none;
+  color: inherit;
+
+  cursor: pointer;
+
+  -webkit-tap-highlight-color: transparent;
+}
+
+
+/* =========================================================
+   CAMPOS
+   ========================================================= */
+
+input,
+textarea,
+select {
+  color: inherit;
+
+  -webkit-tap-highlight-color: transparent;
+}
+
+
+/* =========================================================
+   FOCUS
+   ========================================================= */
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent-secondary);
+  outline-offset: 2px;
+}
+
+
+/* =========================================================
+   IMAGENS / SVG
+   ========================================================= */
+
+img,
+svg {
+  max-width: 100%;
+}
+
+
+/* =========================================================
+   SELEÇÃO DE TEXTO
+   ========================================================= */
+
+::selection {
+  background: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+
+/* =========================================================
+   BARRA DE ROLAGEM
+   ---------------------------------------------------------
+   Visual discreto para manter a identidade medieval.
+   ========================================================= */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-brown);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-brown-light);
+}
