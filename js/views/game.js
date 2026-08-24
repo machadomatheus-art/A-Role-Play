@@ -825,17 +825,27 @@ export async function render(params = {}) {
     }
 
     state.isMaster = isMaster();
-    await clearUnread();
-    await loadMembers();
-    await loadRollCharacter();
 
+    // A interface entra imediatamente. Leituras secundárias não bloqueiam a navegação.
     root.innerHTML = buildShell();
     bindShell(root);
     subscribeMessages(root);
     subscribeTable(root);
 
+    // Tudo que não é necessário para desenhar a tela acontece em paralelo.
+    Promise.allSettled([
+      clearUnread(),
+      loadMembers(),
+      loadRollCharacter()
+    ]).then(() => {
+      if (root.isConnected) {
+        renderMessages(root);
+        state.members?.length && syncMemberSubscriptions(root);
+      }
+    });
+
     if (!state.isMaster) {
-      await verifyCharacterAccess(root);
+      verifyCharacterAccess(root).catch(error => console.warn("Falha ao verificar ficha:", error));
     }
 
     return root;
@@ -868,11 +878,10 @@ async function loadTable() {
 
 async function loadMembers() {
   const ids = Array.isArray(state.table?.members) ? state.table.members : [];
-  const members = [];
-  for (const uid of ids) {
+  const results = await Promise.all(ids.map(async uid => {
     try {
       const snap = await getDoc(doc(db, "users", uid));
-      if (!snap.exists()) continue;
+      if (!snap.exists()) return null;
       let avatarDataUrl = "";
       try {
         const avatarSnap = await getDoc(doc(db, "users", uid, "profile", "avatar"));
@@ -880,12 +889,13 @@ async function loadMembers() {
       } catch (avatarError) {
         console.warn("Falha ao carregar avatar do membro", uid, avatarError);
       }
-      members.push({ uid, ...snap.data(), avatarDataUrl });
+      return { uid, ...snap.data(), avatarDataUrl };
     } catch (error) {
       console.warn("Falha ao carregar membro", uid, error);
+      return null;
     }
-  }
-  state.members = members;
+  }));
+  state.members = results.filter(Boolean);
 }
 
 function syncMemberSubscriptions(root) {
@@ -2176,7 +2186,8 @@ function openDeclarationPicker(kind, parentModal) {
 }
 
 async function openDiceRoller(reset = true) {
-  try { await loadRollCharacter(); } catch (error) { console.warn("Não foi possível atualizar a ficha antes da declaração.", error); }
+  // A ficha já é carregada ao entrar na mesa. Não bloqueie a abertura do modal.
+  loadRollCharacter().catch(error => console.warn("Não foi possível atualizar a ficha antes da declaração.", error));
   if (reset) state.rollDeclarations = [];
   const allowed = getActiveParserCodes();
   const config = state.table?.configuration || {};
