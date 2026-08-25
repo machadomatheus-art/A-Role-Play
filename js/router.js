@@ -899,18 +899,22 @@ document.addEventListener(
 // - sessão seja restaurada
 // =========================================================
 
+let isInitialAuthChange = true;
+
 onAuthStateChanged(
   auth,
   async user => {
 
     /*
      * O primeiro disparo já foi utilizado
-     * pelo authReadyPromise.
+     * pelo authReadyPromise e loadRoute().
      *
-     * Aqui cuidamos das mudanças posteriores.
+     * Aqui ignoramos a execução inicial e cuidamos apenas
+     * das mudanças posteriores de estado.
      */
 
-    if (!authReady) {
+    if (isInitialAuthChange) {
+      isInitialAuthChange = false;
       return;
     }
 
