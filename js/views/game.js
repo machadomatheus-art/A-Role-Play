@@ -825,27 +825,17 @@ export async function render(params = {}) {
     }
 
     state.isMaster = isMaster();
+    await clearUnread();
+    await loadMembers();
+    await loadRollCharacter();
 
-    // A interface entra imediatamente. Leituras secundárias não bloqueiam a navegação.
     root.innerHTML = buildShell();
     bindShell(root);
     subscribeMessages(root);
     subscribeTable(root);
 
-    // Tudo que não é necessário para desenhar a tela acontece em paralelo.
-    Promise.allSettled([
-      clearUnread(),
-      loadMembers(),
-      loadRollCharacter()
-    ]).then(() => {
-      if (root.isConnected) {
-        renderMessages(root);
-        state.members?.length && syncMemberSubscriptions(root);
-      }
-    });
-
     if (!state.isMaster) {
-      verifyCharacterAccess(root).catch(error => console.warn("Falha ao verificar ficha:", error));
+      await verifyCharacterAccess(root);
     }
 
     return root;
@@ -878,10 +868,11 @@ async function loadTable() {
 
 async function loadMembers() {
   const ids = Array.isArray(state.table?.members) ? state.table.members : [];
-  const results = await Promise.all(ids.map(async uid => {
+  const members = [];
+  for (const uid of ids) {
     try {
       const snap = await getDoc(doc(db, "users", uid));
-      if (!snap.exists()) return null;
+      if (!snap.exists()) continue;
       let avatarDataUrl = "";
       try {
         const avatarSnap = await getDoc(doc(db, "users", uid, "profile", "avatar"));
@@ -889,13 +880,12 @@ async function loadMembers() {
       } catch (avatarError) {
         console.warn("Falha ao carregar avatar do membro", uid, avatarError);
       }
-      return { uid, ...snap.data(), avatarDataUrl };
+      members.push({ uid, ...snap.data(), avatarDataUrl });
     } catch (error) {
       console.warn("Falha ao carregar membro", uid, error);
-      return null;
     }
-  }));
-  state.members = results.filter(Boolean);
+  }
+  state.members = members;
 }
 
 function syncMemberSubscriptions(root) {
@@ -966,8 +956,32 @@ function syncMemberSubscriptions(root) {
 }
 
 
+function activeRollCharacterRef() {
+  const activeNpcId = state.isMaster ? String(state.table?.activeMasterNpcId || "").trim() : "";
+  return activeNpcId ? doc(db, "tables", state.tableId, "npcs", activeNpcId) : null;
+}
+
 async function loadRollCharacter() {
   state.rollCharacter = {};
+
+  // Quando o mestre seleciona "Usar essa ficha" em um NPC, a ficha ativa
+  // passa a ser a fonte de verdade das rolagens: atributos, perícias,
+  // habilidades, equipamentos e recursos pertencem ao NPC.
+  const activeNpcRef = activeRollCharacterRef();
+  if (activeNpcRef) {
+    try {
+      const snap = await getDoc(activeNpcRef);
+      if (snap.exists()) {
+        state.rollCharacter = snap.data() || {};
+        return;
+      }
+    } catch (error) {
+      console.warn("Não foi possível carregar a ficha do NPC ativo.", error);
+    }
+  }
+
+  // Sem NPC ativo, mantém exatamente o comportamento anterior para
+  // personagens de jogadores.
   const refs = [
     doc(db, "tables", state.tableId, "characters", state.user.uid),
     doc(db, "users", state.user.uid, "characterSheets", state.tableId)
@@ -1231,10 +1245,15 @@ function subscribeTable(root) {
   state.unsubscribeTable?.();
   state.unsubscribeTable = onSnapshot(doc(db, "tables", state.tableId), snap => {
     if (!snap.exists()) return;
+    const previousActiveNpc = String(state.table?.activeMasterNpcId || "");
     state.table = { id: snap.id, ...snap.data() };
     state.typingUsers = state.table.typing || {};
     state.isMaster = isMaster();
     state.mutedByTable = Array.isArray(state.table.mutedMembers) && state.table.mutedMembers.includes(state.user.uid);
+    const nextActiveNpc = String(state.table?.activeMasterNpcId || "");
+    if (state.isMaster && previousActiveNpc !== nextActiveNpc) {
+      loadRollCharacter().catch(error => console.warn("Não foi possível atualizar a ficha ativa das rolagens.", error));
+    }
     syncMemberSubscriptions(root);
     updateTurnControls(root);
     renderMessages(root);
@@ -1394,27 +1413,50 @@ function findCharacterEquipment(character, name) {
   return characterEquipmentList(character).find(item => String(item?.name || "").trim().toLocaleLowerCase("pt-BR") === wanted) || null;
 }
 
-async function saveCommandCharacter(uid, character) {
+async function saveCommandCharacter(target, character) {
+  const ref = target?.ref;
+  if (!ref) throw new Error("Alvo da ficha inválido.");
+  const uid = target.member?.uid || ref.id;
   const safe = firestoreSafe({ ...character, uid, tableId: state.tableId, updatedAt: serverTimestamp() });
-  await setDoc(doc(db, "tables", state.tableId, "characters", uid), safe, { merge: true });
+  await setDoc(ref, safe, { merge: true });
+}
+
+function normalizedTargetName(value) {
+  return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().replace(/\s+/g, " ").toLocaleLowerCase("pt-BR");
 }
 
 async function findCharacterTarget(name) {
-  const wanted = String(name || "").trim().toLocaleLowerCase("pt-BR");
+  const wanted = normalizedTargetName(name);
   if (!wanted) return null;
-  const member = state.members.find(m => String(m.username || m.displayName || "").trim().toLocaleLowerCase("pt-BR") === wanted);
-  if (member) {
-    const snap = await getDoc(doc(db, "tables", state.tableId, "characters", member.uid));
-    if (snap.exists()) return { member, ref: snap.ref, character: snap.data() || {} };
-  }
+
+  // Comandos de mesa usam SEMPRE o nome da ficha, nunca o nome da conta.
+  // Primeiro procuramos personagens de players.
   const chars = await getDocs(collection(db, "tables", state.tableId, "characters"));
   for (const snap of chars.docs) {
     const c = snap.data() || {};
-    if (String(c.profile?.name || c.name || "").trim().toLocaleLowerCase("pt-BR") === wanted) {
-      const m = state.members.find(x => x.uid === snap.id) || { uid: snap.id, username: name };
-      return { member: m, ref: snap.ref, character: c };
+    const characterName = normalizedTargetName(c.profile?.name || c.name || "");
+    if (characterName === wanted) {
+      const member = state.members.find(x => x.uid === (c.ownerUid || c.uid || snap.id)) || {
+        uid: c.ownerUid || c.uid || snap.id,
+        username: c.profile?.name || c.name || name
+      };
+      return { member, ref: snap.ref, character: c, type: "character" };
     }
   }
+
+  // NPCs vivem em outra coleção, mas para os parsers & passam a ser tratados
+  // exatamente como personagens: o alvo é encontrado pelo nome da ficha.
+  const npcs = await getDocs(collection(db, "tables", state.tableId, "npcs"));
+  for (const snap of npcs.docs) {
+    const c = snap.data() || {};
+    const characterName = normalizedTargetName(c.profile?.name || c.name || "");
+    if (characterName === wanted) {
+      const npcUid = c.npcId || c.characterId || snap.id;
+      const member = { uid: npcUid, username: c.profile?.name || c.name || name, isNpc: true };
+      return { member, ref: snap.ref, character: c, type: "npc" };
+    }
+  }
+
   return null;
 }
 
@@ -1650,7 +1692,7 @@ async function executeGiveCommand(args) {
       description: descriptionRaw ? String(descriptionRaw).trim() : String(configured?.description || "")
     });
   }
-  await saveCommandCharacter(member.uid, character);
+  await saveCommandCharacter(target, character);
   const qtyLabel = parsed.display;
   await postNPC(`📦 ${characterName} recebeu **${qtyLabel}** de ${itemName}.`, { systemEvent: "item-given", actorUid: state.user.uid, targetUid: member.uid, itemName, quantity: parsed.value });
 }
@@ -1674,7 +1716,7 @@ async function executeBreakCommand(args) {
   } else {
     item.load = remaining;
   }
-  await saveCommandCharacter(member.uid, character);
+  await saveCommandCharacter(target, character);
   await postNPC(`💥 ${characterName} perdeu **${parsed.display}** de ${itemName}.`, { systemEvent: "item-broken", actorUid: state.user.uid, targetUid: member.uid, itemName, quantity: parsed.value });
 }
 
@@ -2002,7 +2044,7 @@ function declarationBonusDetails(item) {
       .filter(detail => !active.length || active.includes(detail.code))
       .map(detail => {
         const attr = findAttribute(detail.code);
-        return { code: detail.code, name: attr?.name || detail.code, base: configuredAttributeValue(detail.code), extra: detail.delta, total: detail.delta, expression: detail.expression };
+        return { code: detail.code, name: attr?.name || detail.code, base: configuredAttributeValue(detail.code), extra: detail.delta, total: configuredAttributeValue(detail.code) + (Number(detail.delta) || 0), expression: detail.expression };
       });
   }
   const codes = itemParserCodes(item);
@@ -2163,7 +2205,7 @@ function openDeclarationPicker(kind, parentModal) {
     const disabled = restricted || !costState.ok;
     const description = parserHighlight(item.description || "");
     const details = declarationBonusDetails({ ...item, kind });
-    const bonusText = details.length ? details.map(d => `${d.name}: ${d.base}${d.extra ? ` ${d.extra > 0 ? "+" : ""}${d.extra}` : ""}`).join(" · ") : "Sem atributo somável";
+    const bonusText = details.length ? details.map(d => `${d.name}: ${d.total}`).join(" · ") : "Sem atributo somável";
     return `<button type="button" class="rp-declaration-option rp-${esc(kind)}-option${disabled ? " rp-declaration-disabled" : ""}" data-declare-id="${esc(item.id)}" ${disabled ? "disabled aria-disabled=\"true\"" : ""}><div class="rp-declaration-main"><span>${esc(item.name)}</span>${kind === "ability" && (item.type || item.kind || item.category) ? `<small class="rp-declaration-type">${esc(item.type || item.kind || item.category)}</small>` : ""}</div>${description ? `<div class="rp-declaration-description">${description}</div>` : ""}<small class="rp-declaration-bonus">${esc(bonusText)}</small>${kind === "ability" ? `<div class="rp-declaration-cost">Custo: ${esc(resourceCostDisplay(item.cost))}</div>` : ""}${restricted ? `<small class="rp-declaration-restriction">Não atende à restrição atual</small>` : ""}${!costState.ok ? `<small class="rp-declaration-restriction">Recurso insuficiente: ${esc(costState.insufficient.map(x => `${x.code} ${x.current}/${x.required}`).join(" · "))}</small>` : ""}</button>`;
   }).join("") : `<div class="rp-empty">Nenhum item configurado.</div>`}</div>`, () => openDiceRoller(false));
   picker.querySelectorAll("[data-declare-id]:not(:disabled)").forEach(btn => btn.addEventListener("click", () => {
@@ -2186,8 +2228,7 @@ function openDeclarationPicker(kind, parentModal) {
 }
 
 async function openDiceRoller(reset = true) {
-  // A ficha já é carregada ao entrar na mesa. Não bloqueie a abertura do modal.
-  loadRollCharacter().catch(error => console.warn("Não foi possível atualizar a ficha antes da declaração.", error));
+  try { await loadRollCharacter(); } catch (error) { console.warn("Não foi possível atualizar a ficha antes da declaração.", error); }
   if (reset) state.rollDeclarations = [];
   const allowed = getActiveParserCodes();
   const config = state.table?.configuration || {};
@@ -2221,6 +2262,11 @@ async function openDiceRoller(reset = true) {
 }
 
 async function persistRollCharacter(character) {
+  const activeNpcRef = activeRollCharacterRef();
+  if (activeNpcRef) {
+    await setDoc(activeNpcRef, character, { merge: true });
+    return;
+  }
   const primary = doc(db, "tables", state.tableId, "characters", state.user.uid);
   const primarySnap = await getDoc(primary);
   if (primarySnap.exists()) {
@@ -2245,7 +2291,7 @@ async function applyDeclarationCharacterChanges(declarations, payload) {
   // ficha que está no Firestore agora. Não usamos state.rollCharacter para
   // gravar a ficha, porque esse estado pode estar alguns milissegundos atrás
   // do que o mestre acabou de fazer.
-  const ref = doc(db, "tables", state.tableId, "characters", state.user.uid);
+  const ref = activeRollCharacterRef() || doc(db, "tables", state.tableId, "characters", state.user.uid);
   let committedCharacter = null;
 
   try {
@@ -2410,14 +2456,15 @@ async function submitRoll(modal) {
     return extras;
   });
   let explicitDiceConsumed = 0;
-  const baseDiceDeclarations = dice.flatMap(die => Array.from({ length: die.qty }, () => {
-    const result = rolls[rollCursor++]?.value;
-    return `${die.sides === 1 ? "1" : "1"}d${die.sides}(${result ?? "?"})`;
-  }));
+  const baseDiceDeclarations = dice.flatMap(die => {
+    const qty = Number(die.qty) || 1;
+    for (let i = 0; i < qty; i++) rollCursor++;
+    return [`${qty}x D${die.sides}`];
+  });
 
   // Dice declarados diretamente entram primeiro; dados gerados por parsers continuam
   // sendo parte do resultado, mas não criam uma declaração duplicada.
-  const allDeclarationLabels = [...baseDiceDeclarations.map(value => value.replace(/^1d/, "D"))];
+  const allDeclarationLabels = [...baseDiceDeclarations];
   declarationPayload.forEach((item, itemIndex) => {
     const details = (item.bonusDetails || []).filter(detail => Number.isFinite(Number(detail.total)));
     details.forEach(detail => {
@@ -2442,7 +2489,7 @@ async function submitRoll(modal) {
   const poolText = rolls.map(r => String(r.value)).join(" + ");
   const declarationText = allDeclarationLabels.join(" • ");
   const detailExpression = [poolText, bonusParts.join(" + ")].filter(Boolean).join(" + ");
-  const detailText = [detailExpression, declarationText ? `Declarações: ${declarationText}` : ""].filter(Boolean).join("\n\n");
+  const detailText = detailExpression;
 
   try {
     await setDoc(doc(collection(db, "tables", state.tableId, "messages")), firestoreSafe({
