@@ -1,5 +1,5 @@
 // Identificador único para evitar conflitos com outros PWAs no mesmo domínio do GitHub Pages
-const CACHE_NAME = 'aroleplay-pwa-v1.1.0';
+const CACHE_NAME = 'aroleplay-pwa-v1.1.1';
 
 // Arquivos essenciais pré-cacheados (usando ./ para funcionar em subpastas)
 const PRECACHE_ASSETS = [
