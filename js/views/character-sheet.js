@@ -57,24 +57,59 @@ function fresh(uidValue,characterId=uidValue){
     uid:uidValue, ownerUid:uidValue, characterId, tableId:S.tableId, status:"draft", alive:true, editingAllowed:true,
     profile:{name:"",imageUrl:""},
     createdAt:null,
-    attributes:S.config.attributes.map(x=>({id:x.id||uid("attribute"),code:x.code||code(x),name:label(x),value:x.defaultValue??x.initialValue??0})),
-    resources:S.config.resources.map(x=>{
-      const hasInitial=x.defaultValue!==undefined&&x.defaultValue!==null&&x.defaultValue!=="" || x.initialValue!==undefined&&x.initialValue!==null&&x.initialValue!=="";
-      const max=maxValueOf(x,character);
-      return {id:x.id||uid("resource"),code:x.code||code(x),name:label(x),value:hasInitial?x.defaultValue??x.initialValue:(Number.isFinite(max)?max:0)};
-    }),
-    skills:S.config.skills.map(x=>({id:x.id||uid("skill"),name:label(x),description:x.description||""})),
-    abilities:S.config.abilities.map(x=>({id:x.id||uid("ability"),name:x.name||x.label||"",description:x.description||"",cost:x.cost||""})),
+    attributes:[],
+    resources:[],
+    skills:[],
+    abilities:[],
     equipment:[], finances:{}, states:[],
-    customFields:S.config.customFields.map(x=>{
-      const hasInitial=x.defaultValue!==undefined&&x.defaultValue!==null&&x.defaultValue!=="";
-      const max=maxValueOf(x,character);
-      const type=String(x.type||"text").toLowerCase();
-      const isBar=["bar","barra","percentage","percentual"].includes(type);
-      return {id:x.id||uid("field"),name:label(x),type:x.type||"text",value:hasInitial?x.defaultValue:(isBar&&Number.isFinite(max)?max:"")};
-    }),
+    customFields:[],
     values:{}
   };
+
+  // A ficha precisa existir como objeto antes de qualquer fórmula ser avaliada.
+  // Assim maxValueOf() nunca tenta acessar a variável `character` durante a
+  // inicialização do próprio objeto (TDZ), especialmente na criação de NPCs.
+  character.attributes=S.config.attributes.map(x=>{
+    const type=String(x.type||"number").toLowerCase();
+    const initial=x.defaultValue??x.initialValue??(type==="boolean"?false:0);
+    return {
+      id:x.id||uid("attribute"),
+      code:x.code||code(x),
+      name:label(x),
+      type:x.type||"number",
+      value:type==="boolean"?!!initial:normalizedNumeric(initial)
+    };
+  });
+
+  character.resources=S.config.resources.map(x=>{
+    const max=maxValueOf(x,character);
+    // Recursos começam sempre cheios quando uma ficha é criada.
+    // Depois disso, o valor atual é independente do máximo e só muda durante o jogo.
+    const initial=Number.isFinite(max)?max:0;
+    return {
+      id:x.id||uid("resource"),
+      code:x.code||code(x),
+      name:label(x),
+      value:normalizedNumeric(initial)
+    };
+  });
+
+  character.skills=S.config.skills.map(x=>({
+    id:x.id||uid("skill"),name:label(x),description:x.description||""
+  }));
+  character.abilities=S.config.abilities.map(x=>({
+    id:x.id||uid("ability"),name:x.name||x.label||"",description:x.description||"",cost:x.cost||""
+  }));
+
+  character.customFields=S.config.customFields.map(x=>{
+    const hasInitial=x.defaultValue!==undefined&&x.defaultValue!==null&&x.defaultValue!=="";
+    const max=maxValueOf(x,character);
+    const type=String(x.type||"text").toLowerCase();
+    const isBar=["bar","barra","percentage","percentual"].includes(type);
+    const value=hasInitial?x.defaultValue:(isBar&&Number.isFinite(max)?max:"");
+    return {id:x.id||uid("field"),name:label(x),type:x.type||"text",value:normalizedNumeric(value)};
+  });
+
   return character;
 }
 function normalizeCharacterNumbers(c){
@@ -117,7 +152,16 @@ function formulaRequired(v){ return /^\s*\[.*\]\s*$/.test(String(v??"")); }
 function numericLimit(v,c){ const n=formula(v,c); if(n!==null)return n; const x=Number(v); return Number.isFinite(x)?x:null; }
 function parserChoices(mode,c){const out=[];const add=(x,k)=>{const n=label(x),co=String(x.code||code(x)).slice(0,3).toUpperCase();if(co&&!out.some(z=>z.code===co))out.push({name:n,code:co,kind:k});};if(mode!=="cost")A(S.config.attributes).forEach(x=>add(x,"Atributo"));A(S.config.resources).forEach(x=>add(x,"Recurso"));return out.slice(0,4);}
 function attachFormulaAutocomplete(el,mode,c){let menu=null;const close=()=>{menu?.remove();menu=null};el.addEventListener("input",()=>{const v=el.value||"",pos=el.selectionStart??v.length,left=v.slice(0,pos),m=left.lastIndexOf("[");if(m<0||left.slice(m+1).includes("]")){close();return}const choices=parserChoices(mode,c);if(!choices.length){close();return}close();menu=document.createElement("div");menu.className="cs-parser-menu";choices.forEach(x=>{const b=document.createElement("button");b.type="button";b.innerHTML=`<strong>${esc(x.name)}</strong><small>${esc(x.code)} · ${esc(x.kind)}</small>`;b.onclick=()=>{const before=v.slice(0,m),after=v.slice(pos);el.value=before+"["+x.code+"]"+after;const cursor=before.length+x.code.length+1;el.focus();el.setSelectionRange(cursor,cursor);el.dispatchEvent(new Event("input",{bubbles:true}));close()};menu.appendChild(b)});document.body.appendChild(menu);const r=el.getBoundingClientRect();menu.style.left=Math.max(8,Math.min(window.innerWidth-300,r.left))+"px";menu.style.top=Math.max(8,r.top-menu.offsetHeight-6)+"px";});el.addEventListener("blur",()=>setTimeout(close,150));}
-function input(value,on,area=false){const e=document.createElement(area?"textarea":"input");e.className="cs-input";if(area)e.rows=4;else e.type="text";e.value=value??"";e.addEventListener("input",()=>on(e.value,e));return e;}
+const autoSaveTimers=new WeakMap();
+const resourceMaxSnapshots=new WeakMap();
+let equipmentAddInProgress=false;
+function editableCharacter(c){return !!c&&S.character===c&&(S.isMaster?(S.editing&&c.status==="approved"):(c.editingAllowed!==false&&["draft","rejected","approved"].includes(c.status||"draft")));}
+function scheduleAutoSave(c){
+  // Alterações ficam em memória até o comando explícito de salvar/enviar.
+  // Jogadores só persistem quando enviam a ficha para aprovação; o Mestre salva pela ação própria.
+  return;
+}
+function input(value,on,area=false){const e=document.createElement(area?"textarea":"input");e.className="cs-input";if(area)e.rows=4;else e.type="text";e.value=value??"";e.addEventListener("input",()=>{on(e.value,e);const c=S.character;if(c)scheduleAutoSave(c);});return e;}
 function sectionShell(sec){const e=document.createElement("section");e.className="cs-section";e.dataset.sectionId=sec.id;e.innerHTML=`<div class="cs-section-header"><h2>${esc(sec.label)}</h2></div>`;return e;}
 function configured(id){ if(id==="identity")return true; if(id==="equipment")return S.config.equipmentSettings.enabled; if(id==="finance")return S.config.equipmentSettings.financeEnabled && A(S.config.equipmentSettings.currencyTypes).length>0; return A(S.config[id]).length>0; }
 
@@ -136,6 +180,16 @@ function minValueOf(cfg,c,fallback=null){
   return n!==null?n:null;
 }
 function maxValueOf(cfg,c,fallback=null){
+  const type=String(cfg?.type||"").toLowerCase();
+  // Porcentagem sempre representa uma escala de 0 a 100.
+  // Mesmo que o Mestre deixe o máximo vazio na criação da mesa,
+  // o próprio tipo já define 100 como teto.
+  if(["percentage","percent","percentual","porcentagem"].includes(type)){
+    const raw=cfg?.max??cfg?.maximum??cfg?.maxValue??cfg?.limit??cfg?.capacity;
+    if(raw===undefined||raw===null||raw==="")return 100;
+    const n=numericLimit(raw,c);
+    return n!==null?Math.min(100,n):100;
+  }
   const raw=cfg?.max??cfg?.maximum??cfg?.maxValue??cfg?.limit??cfg?.capacity??fallback;
   if(raw===undefined||raw===null||raw==="")return Infinity;
   const n=numericLimit(raw,c);
@@ -171,7 +225,7 @@ function currentMaxText(cur,cfg,c,unit=""){
   const max=maxValueOf(cfg,c);
   const currentText=numericDisplay(current);
   const maxText=numericDisplay(max);
-  if(max===null)return `${currentText}${unit?` ${unit}`:""}`;
+  if(!Number.isFinite(max))return `${currentText}${unit?` ${unit}`:""}`;
   return `${currentText}/${maxText}${unit?` ${unit}`:""}`;
 }
 function calculateResourceValues(c){
@@ -190,49 +244,73 @@ function renderBoundValue(sec,key,c,edit){
   const cfg=A(S.config[key]), b=document.createElement("div");
   b.className="cs-section-body cs-grid";
   cfg.forEach((x,i)=>{
-    const cur=c[key][i]||(c[key][i]={id:x.id||uid(key.slice(0,-1)),code:(key==="attributes"||key==="resources")?(x.code||code(x)):undefined,name:label(x),value:x.defaultValue??x.initialValue??0});
+    const type=String(x.type||"number").toLowerCase();
+    const isAttribute=key==="attributes";
+    const isBoolean=isAttribute&&["boolean","bool","sim/não","sim / não"].includes(type);
+    const isText=isAttribute&&["text","texto"].includes(type);
+    const isPercentage=isAttribute&&["percentage","percent","percentual","porcentagem"].includes(type);
+    const isNumeric=isAttribute&&!isBoolean&&!isText;
+    const cur=c[key][i]||(c[key][i]={id:x.id||uid(key.slice(0,-1)),code:(key==="attributes"||key==="resources")?(x.code||code(x)):undefined,name:label(x),type:x.type||"number",value:isBoolean?false:(x.defaultValue??x.initialValue??0)});
+    if(isBoolean)cur.value=!!cur.value;
     const card=document.createElement("div");card.className="cs-card";card.dataset.layoutFieldId=`base:${key}:${i}`;
     if(key==="resources")card.dataset.resourceIndex=i;
     card.innerHTML=`<div class="cs-item-title"><strong>${esc(label(x))}</strong><span class="cs-title-actions">${(key==="attributes"||key==="resources")&&x.code?`<small>${esc(x.code)}</small>`:""}</span></div>`;
     const hb=helpButton(x.description);if(hb)card.querySelector(".cs-title-actions").appendChild(hb);
     const field=document.createElement("div");field.className="cs-field";
     const min=minValueOf(x,c),max=maxValueOf(x,c);
-    field.classList.toggle("cs-bound-value-field",key==="attributes");
-    field.innerHTML=`<label>${key==="resources"?"Valor atual":(Number.isFinite(max)?"Valor atual / máximo":"Valor")}</label>`;
+    field.classList.toggle("cs-bound-value-field",isAttribute);
     if(key==="resources"){
+      field.innerHTML=`<label>Valor atual</label>`;
       const st=document.createElement("div");st.className="cs-static cs-resource-full cs-resource-value";st.textContent=currentMaxText(cur,x,c);field.appendChild(st);
+    }else if(isBoolean){
+      field.innerHTML=`<label>Valor</label>`;
+      const row=document.createElement("label");row.className="cs-switch-row cs-attribute-switch";
+      const text=document.createElement("span");text.className="cs-switch-label";text.textContent=cur.value?"Sim":"Não";
+      const sw=document.createElement("span");sw.className="cs-switch";sw.innerHTML=`<input type="checkbox" ${cur.value?"checked":""} ${edit?"":"disabled"}><i></i>`;
+      const cb=sw.querySelector("input");cb.addEventListener("change",()=>{cur.value=cb.checked;text.textContent=cb.checked?"Sim":"Não";scheduleAutoSave(S.character);refreshCalculated(c);});
+      row.append(text,sw);field.appendChild(row);
+    }else if(isText){
+      field.innerHTML=`<label>Valor</label>`;
+      if(edit)field.appendChild(input(String(currentValueOf(cur)),v=>{cur.value=v;refreshCalculated(c);}));
+      else{const st=document.createElement("div");st.className="cs-static";st.textContent=String(currentValueOf(cur)??"");field.appendChild(st);}
     }else if(edit){
+      field.innerHTML=`<label>${isPercentage?"Valor atual (%)":(Number.isFinite(max)?"Valor atual / máximo":"Valor")}</label>`;
       const el=input(numericDisplay(currentValueOf(cur)),(v,node)=>{
-        const normalized=normalizedNumeric(v);
-        if(normalized!==v)node.value=normalized;
+        const normalized=normalizedNumeric(v);if(normalized!==v)node.value=normalized;
+        const previousResourceMaxes=A(S.config.resources).map(cfg=>finiteMaxValueOf(cfg,c));
         const n=Number(normalized);
         if(normalized!==""&&Number.isFinite(n)){
+          const upper=isPercentage?100:max;
           if(n<min){node.value=numericDisplay(min);cur.value=min;toast(`O valor mínimo de ${label(x)} é ${numericDisplay(min)}.`,"error");}
-          else if(n>max){node.value=numericDisplay(max);cur.value=max;toast(`O valor máximo de ${label(x)} é ${numericDisplay(max)}.`,"error");}
+          else if(Number.isFinite(upper)&&n>upper){node.value=numericDisplay(upper);cur.value=upper;toast(`O valor máximo de ${label(x)} é ${numericDisplay(upper)}.` ,"error");}
           else cur.value=normalized;
         }else cur.value=normalized;
-        refreshCalculatedResources(c);
-        refreshCalculated(c);
+        A(c.resources).forEach((resource,index)=>{
+          const oldMax=previousResourceMaxes[index],oldCurrent=Number(currentValueOf(resource)),newMax=finiteMaxValueOf(S.config.resources[index],c);
+          if(!Number.isFinite(newMax))return;
+          if(Number.isFinite(oldMax)&&Number.isFinite(oldCurrent)&&oldCurrent===oldMax)resource.value=newMax;
+          else if(Number.isFinite(oldCurrent)&&oldCurrent>newMax)resource.value=newMax;
+        });
+        refreshCalculatedResources(c);refreshCalculated(c);
       });
-      el.inputMode="decimal";el.classList.add("cs-bound-number");field.appendChild(el);
-    }else{const st=document.createElement("div");st.className="cs-static cs-bound-number";st.textContent=currentMaxText(cur,x,c);field.appendChild(st)}
-    if(Number.isFinite(min)||Number.isFinite(max)){const info=document.createElement("small");info.className="cs-limit";info.textContent=`Limites: ${Number.isFinite(min)?numericDisplay(min):"∞"} – ${Number.isFinite(max)?numericDisplay(max):"∞"}`;field.appendChild(info);}
+      el.inputMode="numeric";el.step="1";el.classList.add("cs-bound-number");el.placeholder=isPercentage?"0–100":"";field.appendChild(el);
+    }else{
+      const st=document.createElement("div");st.className="cs-static cs-bound-number";
+      st.textContent=isPercentage?`${numericDisplay(currentValueOf(cur))}%`:currentMaxText(cur,x,c);field.appendChild(st);
+    }
+    if(isPercentage){const info=document.createElement("small");info.className="cs-limit";info.textContent="Limites: 0 – 100%";field.appendChild(info);}
+    else if(!isBoolean&&Number.isFinite(min)||!isBoolean&&Number.isFinite(max)){const info=document.createElement("small");info.className="cs-limit";info.textContent=`Limites: ${Number.isFinite(min)?numericDisplay(min):"∞"} – ${Number.isFinite(max)?numericDisplay(max):"∞"}`;field.appendChild(info);}
     card.appendChild(field);b.appendChild(card);
   });
   sec.appendChild(b);
 }
-
 function renderSkills(sec,c,edit){
   const cfg=A(S.config.skills),b=document.createElement("div");b.className="cs-section-body cs-grid";
   cfg.forEach((x,i)=>{
-    const cur=c.skills[i]||(c.skills[i]={id:x.id||uid("skill"),name:label(x),description:x.description||""});
+    const cur=c.skills[i]||(c.skills[i]={id:x.id||uid("skill"),name:label(x),description:x.description||"",level:x.level??x.initialLevel??1});
     const card=document.createElement("div");card.className="cs-card cs-skill-card";card.dataset.layoutFieldId=`base:skills:${i}`;
-    if(edit){
-      const nf=document.createElement("div");nf.className="cs-field";nf.innerHTML="<label>Nome</label>";nf.appendChild(input(cur.name,v=>cur.name=v));card.appendChild(nf);
-      const df=document.createElement("div");df.className="cs-field";df.innerHTML="<label>Descrição</label>";df.appendChild(input(cur.description,v=>cur.description=v,true));card.appendChild(df);
-    }else{
-      card.innerHTML=`<div class="cs-item-title"><strong>${esc(cur.name||label(x))}</strong></div>${cur.description?`<div class="cs-desc">${esc(cur.description)}</div>`:""}`;
-    }
+    const level=cur.level??x.level??x.initialLevel;
+    card.innerHTML=`<div class="cs-item-title"><strong>${esc(cur.name||label(x))}</strong>${level!==undefined&&level!==null&&level!==""?`<small>Nível ${esc(level)}</small>`:""}</div>${cur.description?`<div class="cs-desc">${esc(cur.description)}</div>`:""}`;
     const hb=helpButton(cur.description||x.description);if(hb)card.querySelector(".cs-item-title")?.appendChild(hb);
     b.appendChild(card);
   });
@@ -290,7 +368,7 @@ function dropdown(value,options,on,disabled=false){
   const wrap=document.createElement("div");wrap.className="cs-dropdown";
   const btn=document.createElement("button");btn.type="button";btn.className="cs-input cs-dropdown-button";btn.textContent=value||"Selecione...";btn.disabled=disabled;
   const menu=document.createElement("div");menu.className="cs-dropdown-menu";
-  A(options).forEach(v=>{const o=document.createElement("button");o.type="button";o.className="cs-dropdown-option";o.textContent=v;o.addEventListener("click",()=>{btn.textContent=v;menu.hidden=true;on(v)});menu.appendChild(o)});
+  A(options).forEach(v=>{const o=document.createElement("button");o.type="button";o.className="cs-dropdown-option";o.textContent=v;o.addEventListener("click",()=>{btn.textContent=v;menu.hidden=true;on(v);scheduleAutoSave(S.character)});menu.appendChild(o)});
   btn.addEventListener("click",e=>{e.stopPropagation();document.querySelectorAll(".cs-dropdown-menu").forEach(x=>{if(x!==menu)x.hidden=true});menu.hidden=!menu.hidden});
   document.addEventListener("click",()=>{menu.hidden=true},{once:true});
   wrap.append(btn,menu);return wrap;
@@ -314,6 +392,33 @@ function inventorySlots(set,equipment,c){
   if(set.loadSystem!=="slot") return 0;
   return A(equipment).reduce((sum,it)=>sum+inventoryLoad(set,it,c).slots,0);
 }
+function equipmentCapacityMax(set,c){
+  if(set.loadSystem==="slot")return numericLimit(set.slotCount,c);
+  if(set.loadSystem==="weight")return numericLimit(set.weightLimit,c);
+  if(set.loadSystem==="unit")return numericLimit(set.unitMax,c);
+  if(set.loadSystem==="custom")return numericLimit(set.customEquipmentMax,c);
+  return null;
+}
+function equipmentUsedExcluding(set,equipment,c,excludedItem){
+  if(set.loadSystem==="slot")return A(equipment).reduce((sum,it)=>it===excludedItem?sum:sum+inventoryLoad(set,it,c).slots,0);
+  return A(equipment).reduce((sum,it)=>it===excludedItem?sum:sum+(Number(inventoryLoad(set,it,c).current)||0),0);
+}
+function clampEquipmentLoad(set,item,c,value){
+  const n=Number(value); if(!Number.isFinite(n))return value;
+  const requested=Math.max(0,n),max=equipmentCapacityMax(set,c); if(!Number.isFinite(max))return requested;
+  const usedOther=equipmentUsedExcluding(set,c.equipment,c,item);
+  if(set.loadSystem==="slot"){
+    const remainingSlots=Math.max(0,max-usedOther);
+    if(item.fractional){const perSlot=Math.max(1,Number(numericLimit(set.maxItemsPerSlot,c))||1);return Math.min(requested,remainingSlots*perSlot);}
+    return requested>0&&remainingSlots>=1?1:0;
+  }
+  return Math.min(requested,Math.max(0,max-usedOther));
+}
+function enforceEquipmentCapacity(set,equipment,c){
+  if(!Number.isFinite(equipmentCapacityMax(set,c)))return false; let changed=false;
+  for(const item of A(equipment)){if(set.loadSystem==="slot"&&!item.fractional)continue;const before=Number(item.load)||0,clamped=clampEquipmentLoad(set,item,c,before);if(before!==clamped){item.load=clamped;changed=true;}}
+  return changed;
+}
 function inventoryCapacityText(set,equipment,c){
   if(set.loadSystem==="slot"){const used=inventorySlots(set,equipment,c);const max=numericLimit(set.slotCount,c);return `${used}/${Number.isFinite(max)?numericDisplay(max):"∞"} slots`;}
   const total=A(equipment).reduce((sum,it)=>sum+(Number(inventoryLoad(set,it,c).current)||0),0);
@@ -323,65 +428,16 @@ function inventoryCapacityText(set,equipment,c){
   return "Inventário";
 }
 function loadFieldForEquipment(set,item,c,edit,card){
-  const system=set.loadSystem;if(system==="free")return;
-  const field=document.createElement("div");field.className="cs-field cs-load-field";
-  if(system==="slot"){
-    const toggle=document.createElement("label");toggle.className="cs-fraction-toggle";toggle.innerHTML=`<input type="checkbox" ${item.fractional?"checked":""}><span class="cs-toggle-track"><i></i></span><span>Usar carga fracionária</span>`;
-    const cb=toggle.querySelector("input"),wrap=document.createElement("div");wrap.className="cs-fraction-wrap";
-    const max=Math.max(1,numericLimit(set.maxItemsPerSlot,c)||1);
-    const val=input(item.fractional?numericDisplay(item.load??""):"",(v,node)=>{const normalized=normalizedNumeric(v);const n=Number(normalized);if(normalized!==v)node.value=normalized;if(!Number.isFinite(n)||n<0)return;item.load=n;node.classList.remove("cs-invalid");refreshCalculated(c);});val.inputMode="numeric";val.placeholder=`Unidades (máx. ${max} por slot)`;val.disabled=!item.fractional||!edit;
-    const info=document.createElement("small");info.className="cs-limit";info.textContent=`Até ${max} unidades por slot. Quantidades maiores ocupam automaticamente mais slots.`;
-    wrap.append(val,info);wrap.hidden=!item.fractional;cb.disabled=!edit;
-    cb.addEventListener("change",()=>{item.fractional=cb.checked;if(!cb.checked){item.load=1;val.value="";}else if(!item.load||Number(item.load)<1)item.load=1;val.disabled=!cb.checked||!edit;wrap.hidden=!cb.checked;refreshCalculated(c);});
-    field.append(toggle,wrap);
-  }else if(system==="weight"){
-    const unit=set.weightUnit||set.loadUnit||"kg";field.innerHTML=`<label>Peso (${esc(unit)})</label>`;const val=input(numericDisplay(item.load??""),v=>{item.load=normalizedNumeric(v);refreshCalculated(c);});val.inputMode="decimal";val.disabled=!edit;field.appendChild(val);
-  }else if(system==="unit"){
-    field.innerHTML="<label>Quantidade / unidades</label>";const val=input(numericDisplay(item.load??""),v=>{item.load=normalizedNumeric(v);refreshCalculated(c);});val.inputMode="decimal";val.disabled=!edit;field.appendChild(val);
-  }else if(system==="custom"){
-    field.innerHTML=`<label>${esc(set.customEquipmentName||"Carga")}</label>`;const val=input(numericDisplay(item.load??""),v=>{item.load=normalizedNumeric(v);});val.disabled=!edit;field.appendChild(val);
-  }
+  const system=set.loadSystem;if(system==="free")return; const field=document.createElement("div");field.className="cs-field cs-load-field";
+  const boundedInput=(initial,mode,placeholder)=>{const val=input(numericDisplay(initial),(v,node)=>{const normalized=normalizedNumeric(v);if(normalized!==v)node.value=normalized;if(normalized===""){item.load="";refreshCalculated(c);return;}const n=Number(normalized);if(!Number.isFinite(n)||n<0)return;const clamped=clampEquipmentLoad(set,item,c,n);if(clamped<n){node.value=numericDisplay(clamped);item.load=clamped;const unit=system==="weight"?` ${set.weightUnit||set.loadUnit||"kg"}`:system==="unit"?` ${set.loadUnit||"un"}`:system==="custom"?` ${set.loadUnit||set.customEquipmentName||""}`:"";toast(`O limite do inventário foi atingido. Máximo disponível: ${numericDisplay(clamped)}${unit}.`,"error");}else item.load=clamped;refreshCalculated(c);});val.inputMode=mode;val.disabled=!edit;val.placeholder=placeholder||"";return val;};
+  if(system==="slot"){const toggle=document.createElement("label");toggle.className="cs-fraction-toggle";toggle.innerHTML=`<input type="checkbox" ${item.fractional?"checked":""}><span class="cs-toggle-track"><i></i></span><span>Usar carga fracionária</span>`;const cb=toggle.querySelector("input"),wrap=document.createElement("div");wrap.className="cs-fraction-wrap";const max=Math.max(1,numericLimit(set.maxItemsPerSlot,c)||1);const val=boundedInput(item.fractional?numericDisplay(item.load??""):"","numeric",`Unidades (máx. ${max} por slot)`);const slotMax=numericLimit(set.slotCount,c);const info=document.createElement("small");info.className="cs-limit";info.textContent=Number.isFinite(slotMax)?`Até ${max} unidades por slot. O total nunca pode ultrapassar ${numericDisplay(slotMax)} slots.`:`Até ${max} unidades por slot.`;wrap.append(val,info);wrap.hidden=!item.fractional;cb.disabled=!edit;cb.addEventListener("change",()=>{if(cb.checked){const configuredMax=numericLimit(set.slotCount,c),available=Number.isFinite(configuredMax)?Math.max(0,configuredMax-equipmentUsedExcluding(set,c.equipment,c,item)):Infinity;if(available<=0){cb.checked=false;toast("O inventário já atingiu o máximo de slots.","error");return;}item.fractional=true;item.load=clampEquipmentLoad(set,item,c,Math.max(1,Number(item.load)||1));val.value=numericDisplay(item.load);}else{item.fractional=false;item.load=1;val.value="";}val.disabled=!cb.checked||!edit;wrap.hidden=!cb.checked;refreshCalculated(c);});field.append(toggle,wrap);}
+  else if(system==="weight"){const unit=set.weightUnit||set.loadUnit||"kg";field.innerHTML=`<label>Peso (${esc(unit)})</label>`;field.appendChild(boundedInput(item.load??"","decimal","Máximo disponível"));}
+  else if(system==="unit"){field.innerHTML="<label>Quantidade / unidades</label>";field.appendChild(boundedInput(item.load??"","decimal","Máximo disponível"));}
+  else if(system==="custom"){field.innerHTML=`<label>${esc(set.customEquipmentName||"Carga")}</label>`;field.appendChild(boundedInput(item.load??"","decimal","Máximo disponível"));}
   card.appendChild(field);
 }
 function renderEquipment(sec,c,edit){
-  const set=S.config.equipmentSettings,b=document.createElement("div");b.className="cs-section-body";
-  const used=inventorySlots(set,c.equipment,c),slotLimit=numericLimit(set.slotCount,c),maxSlots=Number.isFinite(slotLimit)?Math.max(0,slotLimit):Infinity;
-  const bar=document.createElement("div");bar.className="cs-equipment-summary";bar.innerHTML=`<div><strong>Equipamentos</strong><span class="cs-slot-counter">${esc(inventoryCapacityText(set,c.equipment,c))}</span></div>`;b.appendChild(bar);
-  const list=document.createElement("div");list.className="cs-equip-list";
-  A(c.equipment).forEach((item,i)=>{
-    if(!edit && set.loadSystem==="slot" && item.fractional){
-      const stacks=slotStacks(set,item);
-      stacks.forEach(stack=>{
-        const card=document.createElement("div");card.className="cs-card cs-equipment-card";
-        const max=Math.max(1,numericLimit(set.maxItemsPerSlot,c)||1);
-        card.innerHTML=`<div class="cs-item-title"><strong>${esc(item.name||"Sem nome")}</strong><small>${esc(item.type||"")}</small></div><div class="cs-meta cs-equipment-load">${numericDisplay(stack)}/${numericDisplay(max)}</div>${item.description?`<div class="cs-desc">${esc(shown(item.description,c))}</div>`:""}`;
-        list.appendChild(card);
-      });
-      return;
-    }
-    const card=document.createElement("div");card.className="cs-card cs-equipment-card";
-    if(edit){
-      card.innerHTML=`<div class="cs-field"><label>Nome</label></div><div class="cs-field"><label>Tipo</label></div><div class="cs-field cs-description-field"><label>Descrição</label></div><button type="button" class="cs-danger cs-remove">Remover</button>`;
-      card.children[0].appendChild(input(item.name,v=>item.name=v));card.children[1].appendChild(dropdown(item.type,set.equipmentTypes,v=>item.type=v));const ed=input(item.description,v=>item.description=v,true);attachFormulaAutocomplete(ed,"description",c);card.children[2].appendChild(ed);loadFieldForEquipment(set,item,c,edit,card);
-      card.querySelector(".cs-remove").onclick=()=>{c.equipment.splice(i,1);renderCharacter()};
-    }else{
-      const load=inventoryLoad(set,item,c);
-      let loadText="";
-      if(set.loadSystem!=="free"){
-        if(set.loadSystem==="slot")loadText=item.fractional?`${numericDisplay(load.current)}/${numericDisplay(load.max)}`:`1 slot`;
-        else loadText=`${numericDisplay(load.current)}${load.max!==null?`/${numericDisplay(load.max)}`:""}${load.unit?` ${esc(load.unit)}`:""}`;
-      }
-      card.innerHTML=`<div class="cs-item-title"><strong>${esc(item.name||"Sem nome")}</strong><small>${esc(item.type||"")}</small></div><div class="cs-meta cs-equipment-load">${loadText||"—"}</div>${item.description?`<div class="cs-desc">${esc(shown(item.description,c))}</div>`:""}`;
-      list.appendChild(card);
-      return;
-    }
-    list.appendChild(card);
-  });
-  if(!A(c.equipment).length)list.innerHTML="<div class='cs-empty'>Nenhum equipamento cadastrado.</div>";
-  b.appendChild(list);
-  if(edit){const add=document.createElement("button");add.type="button";add.className="cs-primary cs-add-equipment";add.textContent="+ Adicionar equipamento";add.disabled=set.loadSystem==="slot"&&maxSlots>0&&used>=maxSlots;add.onclick=()=>{c.equipment.push({id:uid("equipment"),name:"",type:set.equipmentTypes[0]||"",load:set.loadSystem==="slot"?1:"",fractional:false,description:""});renderCharacter()};b.appendChild(add);}
-  sec.appendChild(b);
-}
+  const set=S.config.equipmentSettings;enforceEquipmentCapacity(set,c.equipment,c);const b=document.createElement("div");b.className="cs-section-body";const used=inventorySlots(set,c.equipment,c),slotLimit=numericLimit(set.slotCount,c),maxSlots=Number.isFinite(slotLimit)?Math.max(0,slotLimit):Infinity;const bar=document.createElement("div");bar.className="cs-equipment-summary";bar.innerHTML=`<div><strong>Equipamentos</strong><span class="cs-slot-counter">${esc(inventoryCapacityText(set,c.equipment,c))}</span></div>`;b.appendChild(bar);const list=document.createElement("div");list.className="cs-equip-list";A(c.equipment).forEach((item,i)=>{if(!edit&&set.loadSystem==="slot"&&item.fractional){slotStacks(set,item).forEach(stack=>{const card=document.createElement("div");card.className="cs-card cs-equipment-card";const max=Math.max(1,numericLimit(set.maxItemsPerSlot,c)||1);card.innerHTML=`<div class="cs-item-title"><strong>${esc(item.name||"Sem nome")}</strong><small>${esc(item.type||"")}</small></div><div class="cs-meta cs-equipment-load">${numericDisplay(stack)}/${numericDisplay(max)}</div>${item.description?`<div class="cs-desc">${esc(shown(item.description,c))}</div>`:""}`;list.appendChild(card);});return;}const card=document.createElement("div");card.className="cs-card cs-equipment-card";if(edit){card.innerHTML=`<div class="cs-field"><label>Nome</label></div><div class="cs-field"><label>Tipo</label></div><div class="cs-field cs-description-field"><label>Descrição</label></div><button type="button" class="cs-danger cs-remove">Remover</button>`;card.children[0].appendChild(input(item.name,v=>item.name=v));card.children[1].appendChild(dropdown(item.type,set.equipmentTypes,v=>item.type=v));const ed=input(item.description,v=>item.description=v,true);attachFormulaAutocomplete(ed,"description",c);card.children[2].appendChild(ed);loadFieldForEquipment(set,item,c,edit,card);card.querySelector(".cs-remove").onclick=()=>{c.equipment.splice(i,1);rerenderMasterSheet()};}else{const load=inventoryLoad(set,item,c);let loadText="";if(set.loadSystem!=="free")loadText=set.loadSystem==="slot"?(item.fractional?`${numericDisplay(load.current)}/${numericDisplay(load.max)}`:"1 slot"):`${numericDisplay(load.current)}${load.max!==null?`/${numericDisplay(load.max)}`:""}${load.unit?` ${esc(load.unit)}`:""}`;card.innerHTML=`<div class="cs-item-title"><strong>${esc(item.name||"Sem nome")}</strong><small>${esc(item.type||"")}</small></div><div class="cs-meta cs-equipment-load">${loadText||"—"}</div>${item.description?`<div class="cs-desc">${esc(shown(item.description,c))}</div>`:""}`;}list.appendChild(card);});if(!A(c.equipment).length)list.innerHTML="<div class='cs-empty'>Nenhum equipamento cadastrado.</div>";b.appendChild(list);if(edit){const add=document.createElement("button");add.type="button";add.className="cs-primary cs-add-equipment";add.textContent="+ Adicionar equipamento";const maxCap=equipmentCapacityMax(set,c);const canAdd=()=>{if(!Number.isFinite(maxCap))return true;if(set.loadSystem==="slot")return inventorySlots(set,c.equipment,c)<maxCap;if(set.loadSystem!=="free"){const total=A(c.equipment).reduce((sum,it)=>sum+(Number(inventoryLoad(set,it,c).current)||0),0);return total<maxCap;}return true;};add.disabled=!canAdd();add.onclick=()=>{if(!canAdd())return;const item={id:uid("equipment"),name:"",type:set.equipmentTypes[0]||"",load:set.loadSystem==="slot"?1:"",fractional:false,description:""};c.equipment.push(item);scheduleAutoSave(c);rerenderMasterSheet();requestAnimationFrame(()=>{const root=document.querySelector(".cs-master-fullscreen")||document.querySelector(".cs-content");const cards=[...root?.querySelectorAll(".cs-equipment-card")||[]],card=cards.at(-1);card?.scrollIntoView({behavior:"smooth",block:"center"});card?.querySelector("input")?.focus();});};b.appendChild(add);}sec.appendChild(b);}
 
 function currencyConfigEntry(raw,key){
   if(raw&&typeof raw==="object"&&!Array.isArray(raw))return raw;
@@ -396,11 +452,11 @@ function renderFinance(sec,c,edit){
     const key=String(entry.name||entry.label||entry.code||currency).trim();if(!key)return;
     const card=document.createElement("div");card.className="cs-card";
     const f=document.createElement("div");f.className="cs-field";
-    const max=maxValueOf(entry,c);f.innerHTML=`<label>${esc(key)}${max!==null?" · atual / máximo":""}</label>`;
+    const max=maxValueOf(entry,c);f.innerHTML=`<label>${esc(key)}${Number.isFinite(max)?" · atual / máximo":""}</label>`;
     const current=cur[key]??entry.defaultValue??entry.initialValue??0;
     if(edit){const val=input(numericDisplay(current),v=>{cur[key]=normalizedNumeric(v)});val.inputMode="decimal";f.appendChild(val);}
-    else{const st=document.createElement("div");st.className="cs-static";st.textContent=max!==null?`${numericDisplay(current)}/${numericDisplay(max)}`:numericDisplay(current);f.appendChild(st);}
-    if(max!==null){const info=document.createElement("small");info.className="cs-limit";info.textContent=`Máximo definido pelo mestre: ${shown(entry.max??entry.maximum??entry.maxValue,c)}`;f.appendChild(info);}
+    else{const st=document.createElement("div");st.className="cs-static";st.textContent=Number.isFinite(max)?`${numericDisplay(current)}/${numericDisplay(max)}`:numericDisplay(current);f.appendChild(st);}
+    if(Number.isFinite(max)){const info=document.createElement("small");info.className="cs-limit";info.textContent=`Máximo definido pelo mestre: ${shown(entry.max??entry.maximum??entry.maxValue,c)}`;f.appendChild(info);}
     card.appendChild(f);b.appendChild(card);
   });
   sec.appendChild(b);
@@ -432,7 +488,7 @@ function refreshCalculated(c){
     const value=card.querySelector(".cs-custom-value");if(value)value.textContent=max!==null?`${numericDisplay(currentValueOf(cur))}/${numericDisplay(max)}`:numericDisplay(currentValueOf(cur));
     const limit=card.querySelector(".cs-limit");if(limit){const raw=cfg.max??cfg.maximum??cfg.maxValue??"";limit.textContent=raw!==""&&max!==null?`Máximo definido pelo mestre: ${numericDisplay(max)}`:"";}
   });
-  const summary=root.querySelector(".cs-equipment-summary .cs-slot-counter");if(summary)summary.textContent=inventoryCapacityText(S.config.equipmentSettings,c.equipment,c);
+  const equipmentSet=S.config.equipmentSettings;enforceEquipmentCapacity(equipmentSet,c.equipment,c);const summary=root.querySelector(".cs-equipment-summary .cs-slot-counter");if(summary)summary.textContent=inventoryCapacityText(equipmentSet,c.equipment,c);const add=root.querySelector(".cs-add-equipment");if(add){const max=equipmentCapacityMax(equipmentSet,c),used=equipmentSet.loadSystem==="slot"?inventorySlots(equipmentSet,c.equipment,c):null;add.disabled=equipmentAddInProgress||(equipmentSet.loadSystem==="slot"&&Number.isFinite(max)&&used>=max);}
 }
 function renderCustom(sec,c,edit){ renderCustomFieldsInto(sec,c,edit,null); }
 function applySectionFieldLayout(sectionEl,layoutSec){
@@ -445,19 +501,15 @@ function applySectionFieldLayout(sectionEl,layoutSec){
 }
 function renderStates(sec,c,edit){
   const cfg=A(S.config.states),b=document.createElement("div");b.className="cs-section-body cs-grid cs-states";
-  const applied=new Set(A(c.states).map(v=>typeof v==="string"?v:v?.id||v?.name));
+  const applied=new Set(A(c.states).flatMap(v=>{if(typeof v==="string")return [v];return [v?.id,v?.name].filter(Boolean);}));
   if(!cfg.length){b.innerHTML=`<div class="cs-empty">Nenhuma condição foi configurada pelo mestre.</div>`;sec.appendChild(b);return;}
-  if(!S.isMaster&&!A(c.states).length){b.innerHTML=`<div class="cs-empty">Nenhuma condição aplicada.</div>`;sec.appendChild(b);return;}
-  cfg.forEach((x,i)=>{
-    const id=String(x.id||x.name||x.label||`state_${i}`);const active=applied.has(id)||applied.has(label(x));
-    if(!S.isMaster&&!active)return;
-    const card=document.createElement("div");card.className=`cs-card cs-state-card${active?" is-active":""}`;card.dataset.layoutFieldId=`base:states:${i}`;
-    card.innerHTML=`<div class="cs-item-title"><strong>${esc(label(x))}</strong></div>${x.description?`<div class="cs-desc">${esc(x.description)}</div>`:""}`;
-    if(S.isMaster){
-      const btn=document.createElement("button");btn.type="button";btn.className=active?"cs-secondary":"cs-primary";btn.textContent=active?"Remover condição":"Aplicar condição";
-      btn.onclick=async()=>{const next=A(c.states).filter(v=>(typeof v==="string"?v:v?.id||v?.name)!==id&&(typeof v==="string"?v:v?.id||v?.name)!==label(x));if(!active)next.push({id,name:label(x),description:x.description||""});c.states=next;await persistCharacterStates(c);renderCharacter();};
-      card.appendChild(btn);
-    }else if(active){const tag=document.createElement("span");tag.className="cs-state-active";tag.textContent="Aplicada pelo mestre";card.appendChild(tag);}
+  const visible= S.isMaster ? cfg : cfg.filter(x=>{const id=String(x.id||x.name||x.label||"");return applied.has(id)||applied.has(label(x));});
+  if(!visible.length){b.innerHTML=`<div class="cs-empty">Nenhuma condição aplicada.</div>`;sec.appendChild(b);return;}
+  visible.forEach((x)=>{
+    const id=String(x.id||x.name||x.label||"");const active=applied.has(id)||applied.has(label(x));
+    const card=document.createElement("div");card.className=`cs-card cs-state-card${active?" is-active":""}`;
+    card.dataset.layoutFieldId=`base:states:${cfg.indexOf(x)}`;
+    card.innerHTML=`<div class="cs-item-title"><strong>${esc(label(x))}</strong></div>${x.description?`<div class="cs-desc">${esc(x.description)}</div>`:""}<span class="cs-state-active">${active?(S.isMaster?"Ativo":"Ativo pelo mestre"):"Inativo"}</span>`;
     b.appendChild(card);
   });
   sec.appendChild(b);
@@ -619,7 +671,7 @@ function renderCharacter(rootOverride=null,npcOverride=false){
   const root=rootOverride||document.querySelector(".character-sheet-view");if(!root)return;const content=root.querySelector(".cs-content");
   if(!S.character){content.innerHTML=`<div class="cs-empty cs-big">${S.isMaster?"Nenhuma ficha enviada ainda.":"Selecione um personagem ou crie um novo."}</div>`;if(S.isMaster&&!rootOverride)masterPicker(root);else if(!S.isMaster)playerPicker(root);return;}
   if(S.isMaster&&!rootOverride){content.innerHTML=`<div class="cs-master-list-empty"><h2>Fichas dos personagens</h2><p>Clique em uma ficha na lista para abrir em tela cheia.</p></div>`;masterPicker(root);return;}
-  const c=S.character;if(npcOverride){const edit=S.editing||!S.npcs.has(S.selectedNpcId);content.innerHTML=`<div class="cs-character-name-banner cs-character-top-name">${I("npc")} ${esc(c.profile?.name||"Novo NPC")}</div><div class="cs-status"><div><strong>${npcIsDead(c)?`${I("skull")} NPC no cemitério`:"NPC do mestre"}</strong><small>${S.activeMasterNpcId===S.selectedNpcId?"Esta ficha está sendo usada nas rolagens do mestre.":"Esta ficha está separada das fichas dos players."}</small></div><span>${edit?"Modo edição":"Somente visualização"}</span></div><div class="cs-actions"></div>`;const actions=content.querySelector(".cs-actions");actions.innerHTML=`${S.activeMasterNpcId===S.selectedNpcId?`<button class="cs-secondary" data-npc-use-off>${I("stop")} Parar de usar</button>`:(!npcIsDead(c)?`<button class="cs-primary cs-npc-use-button" data-npc-use><span class="cs-action-icon">${I("masks",22)}</span><span>Usar esta ficha</span></button>`:"")}${!edit&&!npcIsDead(c)?`<button class="cs-secondary" data-npc-edit>${I("edit")} Editar ficha</button>`:""}${edit?`<button class="cs-primary" data-npc-save>${I("save")} Salvar NPC</button>`:""}${!npcIsDead(c)?`<button class="cs-danger" data-npc-dead>${I("skull")} Enviar para o cemitério</button>`:`<button class="cs-secondary" data-npc-alive>${I("undo")} Restaurar NPC</button>`}<button class="cs-danger" data-npc-delete>${I("trash")} Excluir NPC</button>`;actions.querySelector("[data-npc-use]")?.addEventListener("click",()=>setActiveMasterNpc(S.selectedNpcId));actions.querySelector("[data-npc-use-off]")?.addEventListener("click",()=>setActiveMasterNpc(null));actions.querySelector("[data-npc-edit]")?.addEventListener("click",()=>{S.editing=true;renderCharacter(rootOverride,true)});actions.querySelector("[data-npc-save]")?.addEventListener("click",saveNpc);actions.querySelector("[data-npc-dead]")?.addEventListener("click",()=>toggleNpcDeath(true));actions.querySelector("[data-npc-alive]")?.addEventListener("click",()=>toggleNpcDeath(false));actions.querySelector("[data-npc-delete]")?.addEventListener("click",deleteNpc);for(const sec of S.layout.sections.filter(x=>x.visible!==false)){const el=renderSection(sec,c,edit);if(el)content.appendChild(el);}return;}
+  const c=S.character;if(npcOverride){const edit=S.editing||!S.npcs.has(S.selectedNpcId);content.innerHTML=`<div class="cs-character-name-banner cs-character-top-name">${I("npc")} ${esc(c.profile?.name||"Novo NPC")}</div><div class="cs-status"><div><strong>${npcIsDead(c)?`${I("skull")} NPC no cemitério`:"NPC do mestre"}</strong><small>${S.activeMasterNpcId===S.selectedNpcId?"Esta ficha está sendo usada nas rolagens do mestre.":"Esta ficha está separada das fichas dos players."}</small></div><span>${edit?"Modo edição":"Somente visualização"}</span></div><div class="cs-actions"></div>`;const actions=content.querySelector(".cs-actions");actions.innerHTML=`${S.activeMasterNpcId===S.selectedNpcId?`<button class="cs-secondary" data-npc-use-off>${I("stop")} Parar de usar</button>`:(!npcIsDead(c)?`<button class="cs-primary cs-npc-use-button" data-npc-use><span class="cs-action-icon">${I("masks",22)}</span><span>Usar esta ficha</span></button>`:"")}${!edit&&!npcIsDead(c)?`<button class="cs-secondary" data-npc-edit>${I("edit")} Editar ficha</button>`:""}${edit?`<button class="cs-primary" data-npc-save>${I("save")} Salvar NPC</button>`:""}<button class="cs-danger" data-npc-delete>${I("trash")} Excluir NPC</button>`;actions.querySelector("[data-npc-use]")?.addEventListener("click",()=>setActiveMasterNpc(S.selectedNpcId));actions.querySelector("[data-npc-use-off]")?.addEventListener("click",()=>setActiveMasterNpc(null));actions.querySelector("[data-npc-edit]")?.addEventListener("click",()=>{S.editing=true;renderCharacter(rootOverride,true)});actions.querySelector("[data-npc-save]")?.addEventListener("click",saveNpc);actions.querySelector("[data-npc-delete]")?.addEventListener("click",deleteNpc);for(const sec of S.layout.sections.filter(x=>x.visible!==false)){const el=renderSection(sec,c,edit);if(el)content.appendChild(el);}return;}
   const playerCanEdit=!S.isMaster&&(c.editingAllowed!==false&&["draft","rejected","approved"].includes(c.status||"draft"));const masterCanEdit=S.isMaster&&c.status==="approved"&&S.editing;const edit=S.isMaster?masterCanEdit:playerCanEdit;
   content.innerHTML=`<div class="cs-character-name-banner cs-character-top-name">${esc(c.profile?.name||"Sem nome")}</div><div class="cs-status"><div><strong>${esc(statusText(c.status))}</strong>${c.status==="dead"?`<small>Esta ficha permanece disponível apenas para consulta. Um novo personagem deve usar uma nova ficha.</small>`:(c.rejectionReason?`<small>${esc(c.rejectionReason)}</small>`:"")}</div><span>${c.status==="dead"?"Registro histórico":(edit?"Modo edição":"Somente visualização")}</span></div><div class="cs-actions"></div>`;
   const actions=content.querySelector(".cs-actions");
@@ -627,7 +679,7 @@ function renderCharacter(rootOverride=null,npcOverride=false){
     actions.innerHTML=`${c.status==="pending"?`<button class="cs-primary" data-a="approve">${I("check")} Aprovar</button><button class="cs-danger" data-a="reject">${I("undo")} Devolver</button>`:""}${c.status==="approved"&&!c.editingAllowed?`<button class="cs-secondary" data-a="unlock">Liberar para o player</button>`:""}${c.status==="approved"&&c.editingAllowed?`<button class="cs-secondary" data-a="lock">Bloquear player</button>`:""}${c.status==="approved"&&!S.editing&&c.status!=="dead"?`<button class="cs-secondary" data-a="edit">Editar ficha</button>`:""}${c.status==="approved"&&S.editing?`<button class="cs-primary" data-save-master>${I("save")} Salvar ficha</button>`:""}`;
     actions.querySelector('[data-a="approve"]')?.addEventListener("click",()=>decide("approve"));actions.querySelector('[data-a="reject"]')?.addEventListener("click",()=>decide("reject"));actions.querySelector('[data-a="unlock"]')?.addEventListener("click",()=>decide("unlock"));actions.querySelector('[data-a="lock"]')?.addEventListener("click",()=>decide("lock"));actions.querySelector('[data-a="edit"]')?.addEventListener("click",()=>{S.editing=true;rerenderMasterSheet();});actions.querySelector('[data-save-master]')?.addEventListener("click",masterSave);
   }else{
-    actions.innerHTML=(edit&&c.status!=="pending"&&c.status!=="approved"?'<span class="cs-player-help">Preencha a ficha e, quando terminar, envie para aprovação.</span>':"");
+    actions.innerHTML=edit&&c.status!=="pending"?`<span class="cs-player-help">As alterações ficam no rascunho até serem enviadas ao mestre.</span>`:"";
   }
   for(const sec of S.layout.sections.filter(x=>x.visible!==false)){const el=renderSection(sec,c,edit);if(el)content.appendChild(el);}
   if(!S.isMaster && ((c.status==="draft"||c.status==="rejected") || (c.status==="approved"&&c.editingAllowed===true)) && edit){const bottom=document.createElement("div");bottom.className="cs-submit-area";bottom.innerHTML=`<p>Quando terminar, envie a ficha para o mestre analisar.</p><button class="cs-primary cs-submit">Enviar para aprovação</button>`;bottom.querySelector(".cs-submit").onclick=submit;content.appendChild(bottom);}
@@ -652,9 +704,27 @@ function styles(){if(document.getElementById("character-sheet-styles"))return;co
 .character-sheet-view{width:100%;min-height:100%;padding:1rem;color:var(--text-primary)}.cs-inner{max-width:1180px;margin:auto}.cs-top{display:flex;align-items:center;gap:.8rem;margin-bottom:1rem}.cs-back{width:42px;height:42px;border:1px solid var(--border-color);border-radius:50%;background:var(--bg-card);color:var(--text-primary);font-size:1.4rem;cursor:pointer}.cs-title h1{margin:0;color:var(--accent-purple);font-size:2rem}.cs-title p{margin:.25rem 0;color:var(--text-secondary)}.cs-layout{display:grid;grid-template-columns:250px minmax(0,1fr);gap:1rem}.cs-picker{background:var(--bg-card);border:1px solid var(--border-color);border-radius:14px;padding:.7rem;align-self:start;position:sticky;top:1rem}.cs-picker-title{display:flex;justify-content:space-between;padding:.5rem;border-bottom:1px solid var(--border-color);margin-bottom:.4rem}.cs-picker-title span{color:var(--accent-purple);font-weight:800}.cs-player{display:flex;width:100%;gap:.6rem;align-items:center;border:0;border-radius:10px;background:transparent;color:var(--text-primary);padding:.6rem;text-align:left;cursor:pointer}.cs-player:hover,.cs-player.selected{background:var(--bg-secondary)}.cs-picker-section-title{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;font-weight:900;color:var(--text-secondary);padding:.7rem .55rem .3rem;border-top:1px solid var(--border-color);margin-top:.35rem}.cs-picker-section-title.cs-dead-section{color:#b66}.cs-new-character{width:100%;margin-top:.7rem}.cs-player span:last-child{min-width:0;display:flex;flex-direction:column}.cs-player small{color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cs-status,.cs-note{display:flex;justify-content:space-between;gap:1rem;padding:.8rem 1rem;background:var(--bg-card);border:1px solid var(--border-color);border-radius:12px;margin-bottom:.8rem}.cs-status small{display:block;color:var(--text-secondary);margin-top:.2rem}.cs-actions{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem}.cs-actions>button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.28rem;text-align:center}.cs-actions>button>.cs-icon,.cs-actions>button>.cs-action-icon .cs-icon{width:24px!important;height:24px!important;min-width:24px;min-height:24px;display:block;flex:0 0 24px}.cs-action-icon{width:24px;height:24px;display:flex;align-items:center;justify-content:center}.cs-player-help{color:var(--text-secondary);font-size:.88rem}.cs-npc-use-button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.2rem;line-height:1.1}.cs-npc-use-button .cs-action-icon{display:flex;align-items:center;justify-content:center}.cs-npc-use-button .cs-icon{width:24px;height:24px}.cs-primary,.cs-secondary,.cs-danger{min-height:40px;padding:.6rem .85rem;border-radius:9px;font-weight:800;cursor:pointer}.cs-primary{background:var(--accent-purple);border:1px solid var(--accent-purple);color:#fff}.cs-secondary{background:var(--bg-card);border:1px solid var(--border-color);color:var(--text-primary)}.cs-danger{background:var(--bg-card);border:1px solid var(--accent-red);color:var(--accent-red)}.cs-section{background:var(--bg-card);border:1px solid var(--border-color);border-radius:14px;margin-bottom:1rem;overflow:visible;box-shadow:0 4px 18px rgba(0,0,0,.06)}.cs-section-header{padding:1rem;background:var(--bg-secondary);border-radius:13px 13px 0 0}.cs-section-header h2{margin:0;font-size:1.1rem}.cs-section-body{padding:1rem}.cs-grid{display:grid;grid-template-columns:repeat(var(--cols,1),minmax(0,1fr));gap:.75rem}.cs-card{padding:.85rem;border:1px solid var(--border-color);border-radius:11px;background:var(--bg-secondary);min-width:0}.cs-item-title{display:flex;justify-content:space-between;gap:.5rem;margin-bottom:.6rem}.cs-item-title small{color:var(--accent-purple);font-weight:800}.cs-desc{color:var(--text-secondary);font-size:.84rem;margin-bottom:.6rem;white-space:pre-wrap}.cs-field{display:flex;flex-direction:column;gap:.3rem;margin-top:.6rem}.cs-field label{font-size:.78rem;color:var(--text-secondary);font-weight:700}.cs-input{width:100%;box-sizing:border-box;min-height:40px;padding:.6rem .7rem;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-card);color:var(--text-primary);outline:none}.cs-input:focus{border-color:var(--accent-purple)}.cs-input.cs-invalid{border-color:var(--accent-red)}textarea.cs-input{resize:vertical}.cs-static{min-height:40px;box-sizing:border-box;padding:.6rem .7rem;background:var(--bg-card);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}.cs-formula-result{color:var(--accent-purple);font-weight:800}.cs-limit,.cs-hint,.cs-formula{color:var(--text-secondary);font-size:.78rem}.cs-limit{color:var(--accent-purple);font-weight:700}.cs-identity{display:grid;grid-template-columns:100px minmax(0,1fr);gap:1rem}.cs-identity-fields{display:grid;gap:.7rem}.cs-switch-row{display:flex;justify-content:space-between;align-items:center;gap:.8rem;cursor:pointer;color:var(--text-secondary);font-weight:700}.cs-switch{position:relative;width:48px;height:28px;display:inline-block;flex:0 0 auto}.cs-switch input{opacity:0;width:0;height:0}.cs-switch i{position:absolute;inset:0;background:#777;border-radius:999px;transition:.18s}.cs-switch i:before{content:"";position:absolute;width:20px;height:20px;left:4px;top:4px;border-radius:50%;background:#fff;transition:.18s}.cs-switch input:checked+i{background:var(--accent-purple)}.cs-switch input:checked+i:before{transform:translateX(20px)}.cs-toolbar{display:flex;justify-content:space-between;gap:.6rem;margin-bottom:.7rem}.cs-equip-list{display:grid;gap:.7rem}.cs-equipment-card{display:grid;grid-template-columns:1fr 1fr;gap:.55rem}.cs-equipment-card .cs-description-field{grid-column:1/-1}.cs-equipment-card .cs-remove{grid-column:1/-1}.cs-slot-load{display:flex;align-items:center;gap:.7rem}.cs-check{display:flex;align-items:center;gap:.35rem;white-space:nowrap;color:var(--text-secondary);font-size:.8rem}.cs-meta{color:var(--text-secondary);font-size:.82rem}.cs-empty{text-align:center;color:var(--text-secondary);padding:1rem}.cs-big{padding:4rem 1rem;background:var(--bg-card);border:1px solid var(--border-color);border-radius:14px}.cs-note{color:var(--text-secondary)}.cs-submit-area{margin:1.5rem 0 2rem;padding:1.25rem;text-align:center;background:var(--bg-card);border:1px solid var(--border-color);border-radius:14px}.cs-submit-area p{margin:0 0 .8rem;color:var(--text-secondary)}.cs-toast{position:fixed;z-index:30000;left:50%;bottom:1.5rem;transform:translate(-50%,120px);padding:.85rem 1.1rem;border-radius:10px;background:var(--bg-card);border:1px solid var(--border-color);box-shadow:0 8px 30px rgba(0,0,0,.2);transition:.22s}.cs-toast.show{transform:translate(-50%,0)}.cs-toast.success{border-color:#48a868}.cs-toast.error{border-color:var(--accent-red)}.cs-modal-bg{position:fixed;inset:0;z-index:40000;display:grid;place-items:center;padding:1rem;background:rgba(0,0,0,.55)}.cs-modal{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--bg-card);border:1px solid var(--border-color);border-radius:16px}.cs-modal header,.cs-modal footer{display:flex;justify-content:space-between;gap:1rem;padding:1rem;border-bottom:1px solid var(--border-color)}.cs-modal footer{border-top:1px solid var(--border-color);border-bottom:0;justify-content:flex-end}.cs-modal h2{margin:0}.cs-modal p{margin:.2rem 0;color:var(--text-secondary);font-size:.84rem}.cs-close{border:0;background:transparent;color:var(--text-primary);font-size:1.5rem}.cs-layout-list{padding:1rem;display:grid;gap:.5rem}.cs-layout-row{display:grid;grid-template-columns:28px 1fr auto auto;align-items:center;gap:.6rem;padding:.7rem;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);cursor:grab}.cs-layout-row.drag{opacity:.4}.cs-layout-row select{display:none}@media(max-width:850px){.cs-layout{grid-template-columns:1fr}.cs-picker{position:static}}@media(max-width:600px){.character-sheet-view{padding:.6rem}.cs-title h1{font-size:1.55rem}.cs-identity{grid-template-columns:1fr}.cs-equipment-card{grid-template-columns:1fr}.cs-equipment-card .cs-description-field,.cs-equipment-card .cs-remove{grid-column:auto}.cs-status{flex-direction:column}.cs-layout-row{grid-template-columns:28px 1fr}.cs-layout-row label{grid-column:2}}
 .cs-character-name-banner{font-size:1.9rem;font-weight:900;color:var(--text-primary);padding:.2rem .2rem 1rem}.cs-title-actions{display:flex;align-items:center;gap:.45rem}.cs-help{width:24px;height:24px;border-radius:50%;border:1px solid var(--border-color);background:var(--bg-card);color:var(--accent-purple);font-weight:900;cursor:pointer}.cs-help-popover{position:fixed;z-index:50000;width:min(270px,calc(100vw - 16px));padding:.8rem;border-radius:12px;background:var(--bg-card);border:1px solid var(--border-color);box-shadow:0 10px 30px rgba(0,0,0,.25);color:var(--text-primary);font-size:.85rem;line-height:1.4}.cs-dropdown{position:relative;width:100%}.cs-dropdown-button{text-align:left;cursor:pointer}.cs-dropdown-menu{position:absolute;z-index:60000;left:0;right:0;top:calc(100% + 4px);background:var(--bg-card);border:1px solid var(--border-color);border-radius:12px;padding:.35rem;box-shadow:0 12px 30px rgba(0,0,0,.25);max-height:240px;overflow:auto}.cs-dropdown-menu[hidden]{display:none}.cs-dropdown-option{display:block;width:100%;padding:.7rem;border:0;background:transparent;color:var(--text-primary);text-align:left;border-radius:8px}.cs-dropdown-option:hover{background:var(--bg-secondary)}.cs-master-fullscreen{position:fixed;inset:0;z-index:45000;background:var(--bg-primary);overflow:auto}.cs-master-sheet{min-height:100%;max-width:980px;margin:auto;padding:0 0 2rem}.cs-master-sheet>header{position:sticky;top:0;z-index:100;display:flex;align-items:center;gap:1rem;padding:.75rem 1rem;background:var(--bg-primary)!important;background-image:none!important;opacity:1!important;border-bottom:1px solid var(--border-color);box-shadow:0 3px 14px rgba(0,0,0,.16);isolation:isolate}.cs-master-sheet .cs-content{position:relative;z-index:1}.cs-master-sheet .cs-content .cs-section-header{z-index:1;background:var(--bg-secondary)!important;background-image:none!important;opacity:1!important}.cs-master-sheet>header .cs-close{width:42px;height:42px;border-radius:50%;background:var(--bg-secondary);cursor:pointer}.cs-master-sheet>header div{display:flex;flex-direction:column}.cs-master-sheet>header small{color:var(--text-secondary)}.cs-master-sheet .cs-content{padding:1rem}.cs-layout-main{width:100%;margin-top:.8rem}.cs-drag{font-size:1.3rem;color:var(--text-secondary);touch-action:none}.cs-layout-row{min-height:54px;touch-action:none}.cs-layout-row .cs-dropdown{width:70px}.cs-layout-row .cs-dropdown-button{min-height:34px;padding:.35rem .5rem}.cs-layout-row .cs-switch-row{font-size:.75rem}.cs-toolbar{position:sticky;top:0;z-index:2;padding:.65rem;background:var(--bg-card);border-bottom:1px solid var(--border-color)}.cs-equip-list{padding-top:.2rem}.cs-equipment-card{background:var(--bg-card);box-shadow:0 2px 8px rgba(0,0,0,.06)}.cs-card{box-shadow:0 1px 5px rgba(0,0,0,.04)}.cs-input{min-height:46px;border-radius:12px;font-size:16px}.cs-section-header{position:sticky;top:0;z-index:1}.cs-player{min-height:58px}.cs-picker-title{position:sticky;top:0;background:var(--bg-card);z-index:1}@media(max-width:600px){.character-sheet-view{padding:.45rem}.cs-inner{width:100%}.cs-top{padding:.25rem .25rem .65rem}.cs-title h1{font-size:1.35rem}.cs-title p{font-size:.78rem}.cs-character-name-banner{font-size:1.55rem;padding:.15rem .15rem .8rem}.cs-section{border-radius:16px;margin-bottom:.75rem}.cs-section-header{padding:.85rem}.cs-section-body{padding:.75rem}.cs-card{padding:.75rem;border-radius:14px}.cs-field{margin-top:.5rem}.cs-actions{position:sticky;bottom:.5rem;z-index:20;padding:.5rem;background:color-mix(in srgb,var(--bg-card) 92%,transparent);border:1px solid var(--border-color);border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.18)}.cs-actions button{flex:1;min-width:120px}.cs-toolbar{flex-direction:column;align-items:stretch}.cs-toolbar .cs-secondary{width:100%}.cs-equipment-card{display:flex;flex-direction:column}.cs-submit-area{margin:1rem 0}.cs-master-sheet .cs-content{padding:.65rem}.cs-master-sheet>header{padding:.6rem .7rem}.cs-modal-bg{padding:0;align-items:end}.cs-modal{width:100%;max-height:92vh;border-radius:18px 18px 0 0}.cs-layout-row{grid-template-columns:30px 1fr auto}.cs-layout-row .cs-switch-row{grid-column:2/-1;justify-content:flex-start}.cs-layout-list{padding:.75rem}}.cs-layout-group-tools{margin:.8rem 1rem;padding:.8rem;border:1px solid var(--border-color);border-radius:12px;display:grid;gap:.6rem}.cs-layout-group-tools small{color:var(--text-secondary)}.cs-field-assignments{display:grid;gap:.45rem}.cs-field-assign{display:grid;grid-template-columns:1fr 180px;gap:.5rem;align-items:center}.cs-field-assign .cs-input{min-height:38px}@media(max-width:600px){.cs-field-assign{grid-template-columns:1fr}.cs-field-assign .cs-dropdown{width:100%}}.cs-description-content{padding:1.2rem;white-space:pre-wrap;line-height:1.55;max-height:65vh;overflow:auto}.cs-parser-menu{position:fixed;z-index:70000;width:min(300px,calc(100vw - 16px));padding:.35rem;background:var(--bg-card);border:1px solid var(--border-color);border-radius:14px;box-shadow:0 14px 35px rgba(0,0,0,.3);display:grid;gap:.25rem}.cs-parser-menu button{display:flex;flex-direction:column;align-items:flex-start;padding:.65rem .75rem;border:0;border-radius:10px;background:transparent;color:var(--text-primary);text-align:left}.cs-parser-menu button:hover{background:var(--bg-secondary)}.cs-parser-menu small{color:var(--text-secondary);margin-top:.15rem}.cs-character-top-name{text-align:center;font-size:2rem;padding:.5rem .5rem 1rem}.cs-master-list-empty{padding:2rem;text-align:center;background:var(--bg-card);border:1px solid var(--border-color);border-radius:16px}.cs-layout-editor{display:flex;flex-direction:column;max-height:calc(100vh - 1rem);height:min(92vh,900px)}.cs-layout-editor .cs-layout-list{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}.cs-layout-editor .cs-layout-group-tools{flex:0 0 auto;max-height:35vh;overflow:auto}.cs-layout-editor footer{flex:0 0 auto}.cs-layout-row{transition:transform .18s ease,box-shadow .18s ease,opacity .18s ease}.cs-layout-row.is-dragging{opacity:.55;transform:scale(1.03);box-shadow:0 12px 30px rgba(0,0,0,.2)}.cs-drop-placeholder{border:2px dashed var(--accent-purple);border-radius:12px;background:color-mix(in srgb,var(--accent-purple) 10%,transparent);transition:height .18s ease,margin .18s ease}.cs-layout-dragging *{cursor:grabbing!important}.cs-fraction-toggle{display:flex;align-items:center;gap:.7rem;padding:.75rem;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-secondary);cursor:pointer;font-weight:800}.cs-fraction-toggle input{display:none}.cs-fraction-toggle .cs-toggle-track{width:48px;height:28px;border-radius:99px;background:#777;position:relative;flex:0 0 auto;transition:.18s}.cs-fraction-toggle .cs-toggle-track i{position:absolute;width:20px;height:20px;top:4px;left:4px;border-radius:50%;background:#fff;transition:.18s}.cs-fraction-toggle input:checked+.cs-toggle-track{background:var(--accent-purple)}.cs-fraction-toggle input:checked+.cs-toggle-track i{transform:translateX(20px)}.cs-fraction-wrap{margin-top:.5rem}.cs-fraction-wrap[hidden]{display:none!important}.cs-modal-bg{background:rgba(0,0,0,.62)!important;z-index:40000}.cs-modal,.cs-dropdown-menu,.cs-parser-menu{background-color:var(--bg-secondary,#ffffff)!important;background-image:none!important;opacity:1!important;isolation:isolate}.cs-modal{box-shadow:0 18px 50px rgba(0,0,0,.35)}.cs-dropdown{position:relative;z-index:10}.cs-dropdown-menu{z-index:70001!important;color:var(--text-primary)}.cs-dropdown-option{background:transparent;color:var(--text-primary);width:100%;border:0;text-align:left;padding:.7rem .75rem;border-radius:9px}.cs-dropdown-option:hover{background:var(--bg-card)}.cs-parser-menu{z-index:70002!important}.cs-parser-menu button{background:var(--bg-secondary)!important;color:var(--text-primary)!important}.cs-parser-menu button:hover{background:var(--bg-card)!important}.cs-description-dialog{overflow:hidden}.cs-description-content{background:var(--bg-secondary,#fff);color:var(--text-primary);border-top:1px solid var(--border-color)}.cs-layout-editor{width:min(760px,100%);height:min(94dvh,900px)!important;max-height:94dvh!important;overflow:hidden!important}.cs-layout-editor>header{position:sticky;top:0;z-index:4;background:var(--bg-secondary,#fff);flex:0 0 auto}.cs-layout-editor .cs-layout-list{background:var(--bg-card);padding:.75rem;overflow-y:auto!important;overflow-x:hidden!important;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}.cs-layout-editor .cs-layout-group-tools{background:var(--bg-secondary,#fff);max-height:30dvh;overflow-y:auto!important;-webkit-overflow-scrolling:touch}.cs-layout-editor>footer{position:sticky;bottom:0;z-index:4;background:var(--bg-secondary,#fff);box-shadow:0 -8px 20px rgba(0,0,0,.08)}.cs-layout-row{background:var(--bg-secondary,#fff)!important;position:relative;min-height:58px;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}.cs-layout-row.is-dragging{z-index:20;background:var(--bg-secondary,#fff)!important;box-shadow:0 16px 36px rgba(0,0,0,.28);transform:scale(1.025)}.cs-drop-placeholder{background:var(--bg-card)!important;border:2px dashed var(--accent-purple);min-height:58px;box-sizing:border-box}.cs-layout-fullscreen{position:fixed;inset:0;z-index:60000;background:var(--bg-primary,#f7f7f9);color:var(--text-primary);overflow:hidden}.cs-layout-editor-full{height:100dvh;width:100%;display:flex;flex-direction:column;background:var(--bg-primary,#f7f7f9)}.cs-layout-editor-head{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:1rem 1.25rem;background:var(--bg-secondary,#fff);border-bottom:1px solid var(--border-color);box-shadow:0 2px 12px rgba(0,0,0,.08)}.cs-layout-editor-head h2{margin:0}.cs-layout-editor-head p{margin:.25rem 0 0;color:var(--text-secondary);font-size:.85rem}.cs-layout-editor-body{flex:1;min-height:0;display:grid;grid-template-columns:280px minmax(0,1fr);gap:1rem;padding:1rem;overflow:hidden}.cs-field-palette{min-width:0;overflow:auto;background:var(--bg-secondary,#fff);border:1px solid var(--border-color);border-radius:16px;padding:.85rem;box-shadow:0 4px 18px rgba(0,0,0,.06)}.cs-palette-head{display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.25rem .1rem .6rem;border-bottom:1px solid var(--border-color)}.cs-palette-count{min-width:24px;height:24px;display:grid;place-items:center;border-radius:999px;background:var(--accent-purple);color:#fff;font-size:.75rem;font-weight:900}.cs-field-palette>p{font-size:.8rem;color:var(--text-secondary);line-height:1.4}.cs-palette-list{display:grid;gap:.5rem}.cs-palette-item{display:flex;align-items:flex-start;gap:.6rem;padding:.7rem;border:1px solid var(--border-color);border-radius:11px;background:var(--bg-card,#fff);cursor:grab;box-shadow:0 2px 8px rgba(0,0,0,.05);user-select:none}.cs-palette-item>span{color:var(--text-secondary);font-size:1.2rem}.cs-palette-item div{min-width:0;display:flex;flex-direction:column}.cs-palette-item small,.cs-layout-field small{display:block;color:var(--text-secondary);font-size:.72rem;margin-top:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cs-session-list{min-width:0;overflow:auto;padding:.1rem .25rem 2rem;display:flex;flex-direction:column;gap:1rem}.cs-layout-section{background:var(--bg-secondary,#fff);border:1px solid var(--border-color);border-radius:16px;padding:.8rem;box-shadow:0 4px 18px rgba(0,0,0,.06);min-width:0}.cs-layout-section-head{display:flex;align-items:center;gap:.7rem;margin-bottom:.8rem}.cs-layout-section-head .cs-drag{cursor:grab}.cs-section-title{flex:1;min-width:0;border:0;border-bottom:1px solid var(--border-color);background:transparent;color:var(--text-primary);font-size:1.05rem;font-weight:900;padding:.5rem .2rem;outline:none}.cs-section-title:focus{border-color:var(--accent-purple)}.cs-section-tools{display:flex;align-items:center;gap:.35rem;white-space:nowrap;color:var(--text-secondary);font-size:.78rem;font-weight:800}.cs-section-tools button{width:32px;height:32px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-card,#fff);color:var(--text-primary);font-size:1.2rem;cursor:pointer}.cs-col-value{min-width:18px;text-align:center;color:var(--text-primary)}.cs-layout-columns{display:grid;grid-template-columns:repeat(var(--editor-cols,1),minmax(0,1fr));gap:.7rem;align-items:start}.cs-layout-column{min-width:0;min-height:95px;padding:.55rem;border:1px dashed var(--border-color);border-radius:12px;background:var(--bg-card,#fff)}.cs-column-label{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);font-weight:900;padding:0 0 .45rem}.cs-layout-fields{min-height:52px;display:grid;gap:.45rem}.cs-layout-field{display:flex;align-items:center;gap:.55rem;min-width:0;padding:.7rem;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary,#fff);cursor:grab;box-shadow:0 2px 7px rgba(0,0,0,.04);user-select:none}.cs-layout-field>div{min-width:0}.cs-layout-field.is-dragging{opacity:.35}.cs-create-section{flex:0 0 auto;min-height:52px;border:2px dashed var(--border-color);border-radius:14px;background:var(--bg-secondary,#fff);color:var(--accent-purple);font-weight:900;cursor:pointer}.cs-layout-editor-foot{flex:0 0 auto;display:flex;justify-content:flex-end;gap:.6rem;padding:.8rem 1rem;background:var(--bg-secondary,#fff);border-top:1px solid var(--border-color);box-shadow:0 -6px 18px rgba(0,0,0,.08)}.cs-section-placeholder{border:2px dashed var(--accent-purple);border-radius:16px;background:color-mix(in srgb,var(--accent-purple) 8%,transparent)}.cs-field-placeholder{border:2px dashed var(--accent-purple);border-radius:10px;background:color-mix(in srgb,var(--accent-purple) 10%,transparent);min-height:52px;box-sizing:border-box}.cs-layout-fullscreen .cs-modal,.cs-layout-fullscreen .cs-dropdown-menu,.cs-layout-fullscreen .cs-parser-menu,.cs-layout-fullscreen .cs-help-popover{background-color:var(--bg-secondary,#fff)!important;background-image:none!important;opacity:1!important}.cs-modal,.cs-dropdown-menu,.cs-parser-menu,.cs-help-popover,.cs-description-dialog{background-color:var(--bg-secondary,#fff)!important;background-image:none!important;opacity:1!important;isolation:isolate}.cs-dropdown-menu{z-index:70001!important}.cs-parser-menu{z-index:70002!important}.cs-help-popover{z-index:70003!important}.cs-layout-dragging *{cursor:grabbing!important}@media(max-width:900px){.cs-layout-editor-body{grid-template-columns:230px minmax(0,1fr)}}@media(max-width:700px){.cs-layout-editor-body{display:flex;flex-direction:column;overflow:auto;padding:.65rem}.cs-field-palette{flex:0 0 auto;max-height:28dvh}.cs-palette-list{grid-template-columns:repeat(2,minmax(0,1fr))}.cs-layout-columns{grid-template-columns:1fr!important}.cs-layout-editor-head{padding:.75rem}.cs-layout-editor-head p{display:none}.cs-layout-editor-foot{padding-bottom:max(.8rem,env(safe-area-inset-bottom))}}.cs-description-modal{z-index:100000!important}.cs-description-modal .cs-modal{position:relative;z-index:100001!important}.cs-layout-fullscreen{z-index:60000!important}.cs-field-palette,.cs-layout-section,.cs-layout-column,.cs-layout-field,.cs-palette-item,.cs-create-section,.cs-section-tools button{background:#2a1b18!important;color:var(--text-primary);box-shadow:none!important}.cs-field-palette,.cs-layout-section,.cs-layout-column{border-color:#bda37f}.cs-layout-field,.cs-palette-item{border:1px dashed #bda37f!important}.cs-palette-item{padding:.5rem .55rem;font-size:.86rem}.cs-layout-field{padding:.45rem .55rem;min-height:38px;font-size:.88rem}.cs-layout-section{padding:.6rem}.cs-layout-section-head{margin-bottom:.55rem;gap:.45rem}.cs-section-title{font-size:.95rem;padding:.35rem .2rem}.cs-section-tools{gap:.2rem;font-size:.72rem}.cs-section-tools button{width:28px;height:28px;border:1px dashed #bda37f!important}.cs-layout-column{min-height:72px;padding:.4rem;border:1px dashed #bda37f!important}.cs-field-placeholder,.cs-section-placeholder{background:#2a1b18!important;border:2px dashed #d8bd92!important}.cs-palette-toggle{width:30px;height:30px;border:1px dashed #bda37f;border-radius:8px;background:#2a1b18;color:var(--text-primary);font-size:1.1rem;font-weight:900}.cs-field-palette.is-collapsed{max-height:52px;overflow:hidden}.cs-layout-editor-body{touch-action:none}.cs-switch i,.cs-fraction-toggle .cs-toggle-track{background:#777!important}.cs-switch input:checked+i,.cs-fraction-toggle input:checked+.cs-toggle-track{background:#6f2638!important}.cs-delete-section{color:#d78b8b!important}`;
 document.head.appendChild(s);const paper=document.createElement("style");paper.textContent=`
-.character-sheet-view{background:var(--bg-primary)!important}.cs-content{background:#efe7d7;border:1px solid #cbb99a;border-radius:4px;padding:1.1rem;box-shadow:0 10px 30px rgba(60,40,20,.12);position:relative}.cs-content:before{content:"";position:absolute;inset:10px;border:1px solid rgba(120,90,55,.18);pointer-events:none;border-radius:2px}.cs-content .cs-section{background:#f7f0e3;border:1px solid #cbb99a;border-radius:3px;box-shadow:0 2px 7px rgba(60,40,20,.08)}.cs-content .cs-section-header{background:#e5d8c2;border-bottom:1px solid #c5b18e;border-radius:2px 2px 0 0}.cs-content .cs-card{background:#fbf6eb;border:1px solid #d5c5a8;border-radius:2px;box-shadow:none}.cs-content .cs-input,.cs-content .cs-static{background:#fffaf0;border:1px solid #cbb99a;border-radius:2px}.cs-content .cs-character-name-banner{font-family:Georgia,serif;letter-spacing:.02em;border-bottom:2px solid #8f7758;margin-bottom:.8rem}.cs-content .cs-section-header h2{font-family:Georgia,serif;text-transform:uppercase;letter-spacing:.05em}.cs-content .cs-state-card.is-active{border-color:#8f7758;background:#eee2ce}.cs-state-active{display:inline-block;margin-top:.55rem;padding:.3rem .55rem;border:1px solid #9b8667;border-radius:999px;font-size:.72rem;font-weight:800;color:#6e5840;background:#e8dcc7}.cs-npc-fullscreen .cs-content{background:#efe7d7}.cs-master-sheet{background:var(--bg-primary)!important}
+.character-sheet-view{background:var(--bg-primary)!important}
+.cs-content{background:#2a1b18!important;border:1px solid #4b3025;border-radius:10px;padding:1rem;box-shadow:none;position:relative}
+.cs-content:before{content:"";position:absolute;inset:8px;border:1px solid rgba(189,163,127,.12);pointer-events:none;border-radius:7px}
+.cs-content .cs-section{background:#241815!important;border:1px solid #4b3025;border-radius:8px;box-shadow:none}
+.cs-content .cs-section-header{background:#321f1a!important;border-bottom:1px solid #4b3025;border-radius:7px 7px 0 0}
+.cs-content .cs-card{background:#321f1a!important;border:1px solid #4b3025;border-radius:7px;box-shadow:none}
+.cs-content .cs-input,.cs-content .cs-static{background:#1f1412!important;border:1px solid #4b3025;border-radius:6px;color:var(--text-primary)}
+.cs-content .cs-character-name-banner{font-family:Georgia,serif;letter-spacing:.02em;border-bottom:1px solid #6b4a38;margin-bottom:.65rem}
+.cs-content .cs-section-header h2{font-family:Georgia,serif;text-transform:uppercase;letter-spacing:.05em}
+.cs-content .cs-state-card.is-active{border-color:#8f6f55;background:#38231d!important}
+.cs-state-active{display:inline-block;margin-top:.35rem;padding:.18rem .42rem;border:1px solid #6b4a38;border-radius:999px;font-size:.66rem;font-weight:800;color:#bda37f;background:transparent}
+.cs-content .cs-actions{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;margin:.15rem 0 .6rem}
+.cs-content .cs-actions button{min-height:32px;padding:.38rem .6rem;border-radius:7px;font-size:.78rem}
+.cs-content .cs-state-card{padding:.5rem .6rem}
+.cs-content .cs-state-card .cs-item-title{margin-bottom:.15rem}
+.cs-content .cs-state-card .cs-desc{margin-bottom:.15rem;font-size:.72rem}
+.cs-npc-fullscreen .cs-content{background:#2a1b18!important}.cs-master-sheet{background:var(--bg-primary)!important}
 `;document.head.appendChild(paper);const extra=document.createElement("style");extra.textContent=`.cs-npc-section{color:#bda37f!important}.cs-npc-player{border-left:3px solid #bda37f}.cs-npc-fullscreen .cs-master-sheet{border-color:#bda37f}.cs-npc-fullscreen .cs-master-sheet header{background:#2a1b18}.cs-npc-fullscreen .cs-master-sheet header strong{color:#bda37f}`+`.cs-palette-head{display:flex;align-items:center;gap:.4rem}.cs-palette-head strong{margin-right:auto}.cs-palette-count{display:grid;place-items:center;min-width:24px;height:24px;padding:0 .35rem;border-radius:999px;background:#6f2638;color:#fff;font-size:.72rem;font-weight:900}.cs-palette-item.is-assigned{opacity:.58;cursor:not-allowed}.cs-palette-assigned{color:#bda37f!important;font-size:.68rem!important}`;document.head.appendChild(extra);
-const wrap=document.createElement("style");wrap.textContent=`
+const attributeTypeStyle=document.createElement("style");attributeTypeStyle.textContent=`
+.cs-attribute-switch{justify-content:flex-end;min-height:38px;padding:.15rem 0}.cs-attribute-switch .cs-switch-label{font-weight:900;color:var(--text-primary);min-width:34px;text-align:right}.cs-attribute-switch .cs-switch{width:52px;height:30px}.cs-attribute-switch .cs-switch i{background:#6b5a50;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}.cs-attribute-switch .cs-switch i:before{width:22px;height:22px;left:4px;top:4px;box-shadow:0 2px 5px rgba(0,0,0,.25)}.cs-attribute-switch .cs-switch input:checked+i{background:#6f2638}.cs-attribute-switch .cs-switch input:checked+i:before{transform:translateX(22px)}
+`;document.head.appendChild(attributeTypeStyle);const wrap=document.createElement("style");wrap.textContent=`
 /* Visualização: nunca deixe texto estourar os limites de cards/colunas. */
 .cs-content .cs-card,
 .cs-content .cs-card *,
@@ -743,11 +813,30 @@ const wrap=document.createElement("style");wrap.textContent=`
 
 async function characterSheetView(params={}){
   S.tableId=params.tableId||params.id||null;S.user=auth.currentUser;if(!S.user||!S.tableId){nav("/home");return;}styles();
-  try{await load();const app=document.getElementById("app");app.innerHTML=`<div class="character-sheet-view"><div class="cs-inner"><div class="cs-top"><button class="cs-back">‹</button><div class="cs-title"><h1>${I("sword",18)} Ficha de personagem</h1><p>${esc(S.table.name||"Mesa")}</p></div></div><div class="cs-layout"><aside class="cs-picker"></aside><main class="cs-content"></main></div></div></div>`;app.querySelector(".cs-back").onclick=()=>nav("/game/"+encodeURIComponent(S.tableId));renderCharacter();
+  try{await load();const app=document.getElementById("app");app.innerHTML=`<div class="character-sheet-view"><div class="cs-inner"><div class="cs-top"><button class="cs-back">‹</button><div class="cs-title"><h1> Ficha de personagem</h1><p>${esc(S.table.name||"Mesa")}</p></div></div><div class="cs-layout"><aside class="cs-picker"></aside><main class="cs-content"></main></div></div></div>`;app.querySelector(".cs-back").onclick=()=>nav("/game/"+encodeURIComponent(S.tableId));renderCharacter();
     if(S.isMaster){onSnapshot(collection(db,"tables",S.tableId,"characters"),snap=>{S.characters.clear();snap.forEach(x=>S.characters.set(x.id,normalize(x.data(),x.id)));if(S.selectedId&&!S.editing)S.character=S.characters.get(S.selectedId)||null;renderCharacter();});onSnapshot(collection(db,"tables",S.tableId,"npcs"),snap=>{S.npcs.clear();snap.forEach(x=>S.npcs.set(x.id,normalize(x.data(),S.user.uid,x.id)));if(S.selectedNpcId&&!S.editing&&document.querySelector(".cs-npc-fullscreen")){S.character=S.npcs.get(S.selectedNpcId)||null;renderCharacter(document.querySelector(".cs-npc-fullscreen"),true);}renderCharacter();});}
     else{onSnapshot(collection(db,"tables",S.tableId,"characters"),snap=>{S.characters.clear();snap.forEach(x=>{const raw=x.data()||{};if((raw.ownerUid||raw.uid)===S.user.uid)S.characters.set(x.id,normalize(raw,S.user.uid,x.id));});const chars=playerCharacters();const alive=chars.find(c=>!characterIsDead(c));if(!S.editing){S.selectedId=alive?.characterId||null;S.character=alive||null;}renderCharacter();});}
     onSnapshot(doc(db,"tables",S.tableId),snap=>{if(snap.exists()){S.table={id:snap.id,...snap.data()};S.config=configOf(S.table);S.layout=S.config.layout;S.activeMasterNpcId=S.table.activeMasterNpcId||null;renderCharacter();}});
   }catch(e){console.error(e);document.getElementById("app").innerHTML=`<div class="character-sheet-view"><div class="cs-inner"><div class="cs-big cs-empty"><h2>Não foi possível abrir a ficha</h2><p>${esc(e.message||"Tente novamente.")}</p><button class="cs-primary" onclick="history.back()">Voltar</button></div></div></div>`;}
 }
 
+
+const mobileSheetStyle=document.createElement("style");
+mobileSheetStyle.textContent=`
+/* Mobile-first: ações rápidas, alvos de toque confortáveis e pouca ocupação visual. */
+.cs-actions{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;}
+.cs-actions button{min-width:40px;min-height:40px;padding:.45rem .65rem;touch-action:manipulation;-webkit-tap-highlight-color:transparent;}
+.cs-actions .cs-icon{margin:0!important;}
+@media(max-width:600px){
+  .cs-actions{position:sticky;bottom:0;z-index:20;margin:0 -.6rem .65rem;padding:.45rem .55rem calc(.45rem + env(safe-area-inset-bottom));background:linear-gradient(to top,var(--bg-primary) 72%,transparent);backdrop-filter:blur(5px);}
+  .cs-actions button{flex:0 0 42px;width:42px;height:42px;padding:0;display:grid;place-items:center;border-radius:10px;}
+  .cs-actions button .cs-action-icon{margin:0!important;}
+  .cs-actions button{font-size:0;}
+  .cs-actions button .cs-icon{width:18px;height:18px;}
+  .cs-actions .cs-player-help{font-size:.72rem;line-height:1.25;max-width:calc(100vw - 70px);}
+  .cs-submit-area{position:sticky;bottom:0;z-index:19;margin:0 -.6rem;padding:.55rem .6rem calc(.55rem + env(safe-area-inset-bottom));background:var(--bg-primary);border-top:1px solid var(--border-color);}
+  .cs-submit-area .cs-submit{width:100%;min-height:44px;}
+  .cs-content input,.cs-content textarea,.cs-content select,.cs-content button{touch-action:manipulation;}
+}
+`;document.head.appendChild(mobileSheetStyle);
 export { characterSheetView as render, characterSheetView as default };
