@@ -17,7 +17,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
-const CACHE_VERSION = "a-role-play-v1";
+const CACHE_VERSION = "a-role-play-v3";
 const APP_SHELL = ["/", "/index.html"];
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const OFFLINE_URL = "/";
@@ -51,6 +51,8 @@ self.addEventListener("message", (event) => {
 // Firebase background messages.
 // Data-only messages are shown here manually so we control the A Role Play icon.
 messaging.onBackgroundMessage((payload) => {
+  console.log("[A Role Play] 🔔 FCM RECEBIDO PELO SERVICE WORKER:", payload);
+
   const notification = payload?.notification || {};
   const data = payload?.data || {};
 
@@ -65,10 +67,14 @@ messaging.onBackgroundMessage((payload) => {
     body,
     icon: "/assets/icons/icon-192.png",
     badge: "/assets/icons/icon-192.png",
+    tag: data.tableId ? `a-role-play-table-${data.tableId}` : "a-role-play-message",
+    renotify: true,
     data: {
       link: data.link || "/",
       tableId: data.tableId || ""
     }
+  }).catch(error => {
+    console.error("[A Role Play] ❌ Falha ao exibir notificação:", error);
   });
 });
 
