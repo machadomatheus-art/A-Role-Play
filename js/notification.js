@@ -43,8 +43,15 @@ export async function enableARolePlayPushNotifications() {
   if (!user) throw new Error("Nenhum usuário do A Role Play está conectado.");
 
   // Usa o ÚNICO service worker do PWA.
-  const registration = await navigator.serviceWorker.register("/sw.js", {
-    scope: "/"
+  const appBase = new URL("./", window.location.href);
+  const swUrl = new URL("sw.js", appBase).href;
+  const appScope = appBase.href;
+
+  console.log("[A Role Play] Registrando Service Worker:", { swUrl, appScope });
+
+  const registration = await navigator.serviceWorker.register(swUrl, {
+    scope: appScope,
+    updateViaCache: "none"
   });
 
   // Aguarda um SW ativo antes de entregá-lo ao FCM.
