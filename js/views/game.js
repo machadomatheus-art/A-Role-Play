@@ -69,7 +69,8 @@ const state = {
   modalBack: null,
   typingUsers: {},
   typingTimer: null,
-  longPressTimer: null
+  longPressTimer: null,
+  unsubscribeCharacterAccess: null
 };
 
 // ============================================================
@@ -1009,32 +1010,82 @@ async function loadRollCharacter() {
   }
 }
 
-async function verifyCharacterAccess(root) {
-  // Contrato de dados para character-sheet.js:
-  // tables/{tableId}/characters/{uid}
-  const charRef = doc(db, "tables", state.tableId, "characters", state.user.uid);
-  const charSnap = await getDoc(charRef);
-  if (charSnap.exists()) return;
-
-  // Compatibilidade com uma possível implementação futura em:
-  // users/{uid}/characterSheets/{tableId}
-  const alt = await getDoc(doc(db, "users", state.user.uid, "characterSheets", state.tableId));
-  if (alt.exists()) return;
-
+function renderCharacterAccessLock(root, locked = true, status = "draft") {
   root.querySelector(".rp-lock-overlay")?.remove();
+  if (!locked) return;
+
   const lock = document.createElement("div");
   lock.className = "rp-lock-overlay";
+  const message = status === "pending"
+    ? "Sua ficha foi enviada e está aguardando a aprovação do mestre."
+    : status === "rejected"
+      ? "Sua ficha foi devolvida para edição. Envie novamente depois de corrigir os dados."
+      : "Para participar do roleplay, primeiro você precisa criar e enviar sua ficha de personagem.";
+
   lock.innerHTML = `
     <div class="rp-lock-card">
       <div class="rp-lock-mark">✦</div>
-      <h2>Sua ficha ainda não está pronta</h2>
-      <p>Para participar do roleplay, primeiro você precisa criar ou preencher sua ficha de personagem.</p>
+      <h2>${status === "pending" ? "Aguardando aprovação" : "Sua ficha ainda não está pronta"}</h2>
+      <p>${esc(message)}</p>
       <button class="rp-primary" id="rp-open-sheet" type="button">Abrir minha ficha</button>
       <button class="rp-ghost" id="rp-lock-home" type="button">Voltar para a Home</button>
     </div>`;
   root.appendChild(lock);
   root.querySelector("#rp-open-sheet")?.addEventListener("click", () => navigate(`/character-sheet/${encodeURIComponent(state.tableId)}`));
   root.querySelector("#rp-lock-home")?.addEventListener("click", () => navigate("/home"));
+}
+
+async function verifyCharacterAccess(root) {
+  // character-sheet.js usa IDs próprios (character_xxx). Portanto, NUNCA
+  // podemos assumir que characters/{uid} é o documento do player.
+  // A fonte de verdade é ownerUid/uid dentro de tables/{tableId}/characters.
+  state.unsubscribeCharacterAccess?.();
+
+  const evaluate = snapshot => {
+    let playerCharacter = null;
+
+    snapshot.forEach(snap => {
+      const raw = snap.data() || {};
+      const ownerUid = raw.ownerUid || raw.uid;
+      if (ownerUid !== state.user.uid) return;
+      if (raw.type === "npc" || raw.npcId) return;
+
+      // Se houver mais de uma ficha, priorizamos uma viva; depois, a mais
+      // avançada no fluxo de aprovação.
+      const candidate = { id: snap.id, ...raw };
+      if (!playerCharacter) {
+        playerCharacter = candidate;
+        return;
+      }
+      const rank = c => ({ approved: 4, pending: 3, rejected: 2, draft: 1, dead: 0 }[c?.status] ?? 0);
+      const currentScore = rank(playerCharacter) + (playerCharacter.alive === false ? -10 : 0);
+      const nextScore = rank(candidate) + (candidate.alive === false ? -10 : 0);
+      if (nextScore > currentScore) playerCharacter = candidate;
+    });
+
+    const approved = !!playerCharacter && playerCharacter.status === "approved" && playerCharacter.alive !== false;
+    renderCharacterAccessLock(root, !approved, playerCharacter?.status || "draft");
+  };
+
+  // Uma única assinatura em tempo real resolve tanto a aprovação posterior
+  // quanto uma devolução/reenvio da ficha, sem exigir sair e entrar na mesa.
+  state.unsubscribeCharacterAccess = onSnapshot(
+    collection(db, "tables", state.tableId, "characters"),
+    evaluate,
+    error => {
+      console.error("Erro ao acompanhar aprovação da ficha:", error);
+      renderCharacterAccessLock(root, true, "draft");
+    }
+  );
+
+  // Também força uma leitura inicial antes de a assinatura receber o primeiro
+  // snapshot, caso o navegador esteja retomando uma tela já montada.
+  try {
+    const snapshot = await getDocs(collection(db, "tables", state.tableId, "characters"));
+    evaluate(snapshot);
+  } catch (error) {
+    console.warn("Não foi possível verificar a ficha do player:", error);
+  }
 }
 
 // ============================================================
@@ -1931,13 +1982,27 @@ async function executeChatCommand(raw) {
 // ============================================================
 
 async function notifyTablePush({ text, senderUid = state.user?.uid, senderName = state.user?.displayName || "Usuário", recipientUids = null, type = "message" } = {}) {
-  if (!text || !state.tableId) return;
-  const ids = Array.isArray(recipientUids)
-    ? recipientUids.filter(uid => uid && uid !== senderUid)
-    : (Array.isArray(state.table?.members) ? state.table.members.filter(uid => uid && uid !== senderUid) : []);
-  if (!ids.length) return;
+  if (!text || !state.tableId || !state.user) return null;
+
+  // A lista de membros do documento da mesa é a fonte de verdade. Removemos
+  // duplicados e o próprio remetente antes de chamar a central FCM.
+  const sourceIds = Array.isArray(recipientUids)
+    ? recipientUids
+    : (Array.isArray(state.table?.members) ? state.table.members : []);
+  const ids = [...new Set(sourceIds.map(uid => String(uid || "").trim()).filter(uid => uid && uid !== senderUid))];
+
+  console.log("[A Role Play] Push → destinatários:", ids);
+  if (!ids.length) {
+    console.warn("[A Role Play] Push → nenhum destinatário válido encontrado.", {
+      tableId: state.tableId,
+      members: state.table?.members || [],
+      senderUid
+    });
+    return { ok: true, sent: 0, reason: "no_recipients" };
+  }
+
   try {
-    await sendARolePlayPush({
+    const result = await sendARolePlayPush({
       tableId: state.tableId,
       tableName: state.table?.name || "A Role Play",
       senderUid,
@@ -1946,9 +2011,12 @@ async function notifyTablePush({ text, senderUid = state.user?.uid, senderName =
       recipientUids: ids,
       type
     });
+    console.log("[A Role Play] Push → resposta:", result);
+    return result;
   } catch (error) {
     // Push nunca pode impedir o envio da mensagem para o Firestore.
     console.warn("[A Role Play] Push da mesa não enviado:", error);
+    return null;
   }
 }
 
@@ -2041,7 +2109,7 @@ async function sendText(root) {
       lastMessageAt: serverTimestamp()
     }).catch(() => {});
     await bumpUnread(state.user.uid);
-    void notifyTablePush({ text, senderUid: state.user.uid, senderName: state.user.displayName || "Usuário", type: "message" });
+    await notifyTablePush({ text, senderUid: state.user.uid, senderName: state.user.displayName || "Usuário", type: "message" });
   } catch (error) {
     console.error("Erro ao enviar mensagem:", error);
     toast(error.code === "permission-denied" ? "Você não tem permissão para enviar mensagens." : "Não foi possível enviar a mensagem.", "error");
@@ -2086,7 +2154,7 @@ async function handlePhoto(root, file) {
       lastMessageAt: serverTimestamp()
     }).catch(() => {});
     await bumpUnread(state.user.uid);
-    void notifyTablePush({ text: "📷 Foto", senderUid: state.user.uid, senderName: state.user.displayName || "Usuário", type: "image" });
+    await notifyTablePush({ text: "📷 Foto", senderUid: state.user.uid, senderName: state.user.displayName || "Usuário", type: "image" });
   } catch (error) {
     console.error("Erro ao enviar foto:", error);
     toast(error.message || "Não foi possível enviar a foto.", "error");
@@ -3075,9 +3143,11 @@ export function destroy() {
   state.unsubscribeMessages?.();
   state.unsubscribeTable?.();
   state.unsubscribeMembers?.();
+  state.unsubscribeCharacterAccess?.();
   state.unsubscribeMessages = null;
   state.unsubscribeTable = null;
   state.unsubscribeMembers = null;
+  state.unsubscribeCharacterAccess = null;
   clearTimeout(state.typingTimer);
   setTyping(false);
 }
