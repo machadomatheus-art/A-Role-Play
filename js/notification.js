@@ -43,7 +43,7 @@ export async function enableARolePlayPushNotifications() {
   if (!user) throw new Error("Nenhum usuário do A Role Play está conectado.");
 
   // Usa o ÚNICO service worker do PWA.
-  const appBase = new URL("./", window.location.href);
+  const appBase = new URL("./A-Role-Play/", window.location.href);
   const swUrl = new URL("sw.js", appBase).href;
   const appScope = appBase.href;
 
