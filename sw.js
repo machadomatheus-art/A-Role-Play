@@ -1,85 +1,157 @@
-// Identificador único para evitar conflitos com outros PWAs no mesmo domínio do GitHub Pages
-const CACHE_NAME = 'aroleplay-pwa-v1.1.1';
+/* A Role Play — Service Worker
+ * PWA cache + offline support + Firebase Cloud Messaging.
+ */
 
-// Arquivos essenciais pré-cacheados (usando ./ para funcionar em subpastas)
-const PRECACHE_ASSETS = [
-  './',
-  './index.html',
-  './css/style.css',
-  './js/router.js',
-  './js/views/game.js',
-  './js/views/profile.js',
-  './js/views/character-sheet.js',
-  './js/views/home.js',
-  './js/views/auth.js',
-  './js/views/create-table.js',
-  './manifest.json',
-  './assets/icons/icon-192.png',
-  './assets/icons/icon-512.png'
-];
+importScripts("https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js");
+importScripts("https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js");
 
-// Instalação: Pré-carrega recursos vitais
-self.addEventListener('install', (event) => {
+const firebaseConfig = {
+  apiKey: "AIzaSyBUg7l99dLX04OrqM_Jlb6-58y1A9BB3N8",
+  authDomain: "rpg-ee17e.firebaseapp.com",
+  projectId: "rpg-ee17e",
+  storageBucket: "rpg-ee17e.firebasestorage.app",
+  messagingSenderId: "136442258825",
+  appId: "1:136442258825:web:b7dadfb6c2d6d3ed5a2d58"
+};
+
+firebase.initializeApp(firebaseConfig);
+const messaging = firebase.messaging();
+
+const CACHE_VERSION = "a-role-play-v1";
+const APP_SHELL = ["/", "/index.html"];
+const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
+const OFFLINE_URL = "/";
+
+self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(PRECACHE_ASSETS);
-    }).then(() => self.skipWaiting())
+    caches.open(CACHE_VERSION)
+      .then((cache) => cache.addAll(APP_SHELL))
+      .then(() => self.skipWaiting())
   );
 });
 
-// Ativação: Limpa APENAS os caches antigos deste app específico
-self.addEventListener('activate', (event) => {
+self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cache) => {
-          if (cache.startsWith('aroleplay-') && cache !== CACHE_NAME) {
-            console.log('[Service Worker] Deletando cache antigo:', cache);
-            return caches.delete(cache);
+    caches.keys()
+      .then((keys) => Promise.all(
+        keys
+          .filter((key) => key !== CACHE_VERSION && key !== RUNTIME_CACHE)
+          .map((key) => caches.delete(key))
+      ))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
+// Firebase background messages.
+// Data-only messages are shown here manually so we control the A Role Play icon.
+messaging.onBackgroundMessage((payload) => {
+  const notification = payload?.notification || {};
+  const data = payload?.data || {};
+
+  // Notification payloads are already displayed by FCM in the background.
+  // Only manually display data-only messages to avoid duplicates.
+  if (notification.title || notification.body) return;
+
+  const title = data.title || "A Role Play";
+  const body = data.body || data.message || "Você recebeu uma nova mensagem.";
+
+  self.registration.showNotification(title, {
+    body,
+    icon: "/assets/icons/icon-192.png",
+    badge: "/assets/icons/icon-192.png",
+    data: {
+      link: data.link || "/",
+      tableId: data.tableId || ""
+    }
+  });
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  const target = event.notification.data?.link || "/";
+
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true })
+      .then((clientList) => {
+        for (const client of clientList) {
+          if ("focus" in client) {
+            if ("navigate" in client && target) {
+              return client.navigate(target).then(() => client.focus());
+            }
+            return client.focus();
           }
-        })
-      );
-    }).then(() => self.clients.claim())
+        }
+
+        if (clients.openWindow) {
+          return clients.openWindow(target);
+        }
+      })
   );
 });
 
-// Interceptador de Requisições
-self.addEventListener('fetch', (event) => {
-  const req = event.request;
-  const url = new URL(req.url);
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
 
-  // Não intercepta chamadas para apis externas (Firebase Auth, Firestore) nem métodos que não sejam GET
-  if (req.method !== 'GET' || !url.origin.includes(self.location.origin)) {
+  if (request.method !== "GET") return;
+
+  const url = new URL(request.url);
+
+  if (
+    url.origin !== self.location.origin ||
+    url.protocol === "chrome-extension:" ||
+    url.hostname.includes("googleapis.com") ||
+    url.hostname.includes("firebaseio.com") ||
+    url.hostname.includes("firebasestorage.googleapis.com") ||
+    url.hostname.includes("gstatic.com")
+  ) {
     return;
   }
 
-  // 1. Roteamento de Navegação SPA (ex: /home, /game/123)
-  // Retorna a index.html pré-cacheada do repositório
-  if (req.mode === 'navigate') {
+  if (request.mode === "navigate") {
     event.respondWith(
-      caches.match('./index.html').then((cached) => {
-        return cached || fetch(req).catch(() => caches.match('./index.html'));
-      })
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(async () => {
+          const cached =
+            (await caches.match(request)) ||
+            (await caches.match("/index.html")) ||
+            (await caches.match(OFFLINE_URL));
+
+          return cached || new Response(
+            "<!doctype html><html lang='pt-BR'><meta charset='utf-8'><title>A Role Play</title><body style='background:#24140f;color:#f1dfc1;font-family:system-ui;text-align:center;padding:40px'><h1>A Role Play</h1><p>Você está offline.</p></body></html>",
+            { headers: { "Content-Type": "text/html; charset=utf-8" } }
+          );
+        })
     );
     return;
   }
 
-  // 2. Arquivos Estáticos e Views Dinâmicas (Stale-While-Revalidate)
-  event.respondWith(
-    caches.match(req).then((cachedResponse) => {
-      const fetchPromise = fetch(req)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            const responseClone = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(req, responseClone);
-            });
-          }
-          return networkResponse;
-        })
-        .catch(() => cachedResponse);
+  if (["style", "script", "image", "font"].includes(request.destination)) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) return cached;
 
-      return cachedResponse || fetchPromise;
-    })
-  );
+        return fetch(request).then((response) => {
+          if (!response || !response.ok) return response;
+
+          const copy = response.clone();
+          caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy));
+          return response;
+        });
+      })
+    );
+  }
 });
