@@ -2,7 +2,6 @@ import { auth, db, storage } from "../firebase-config.js";
 import { doc,getDoc,setDoc,updateDoc,deleteDoc,onSnapshot,collection,query,arrayUnion,arrayRemove,serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { updateProfile,updatePassword,signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import { enableARolePlayPushNotifications } from "../notification.js";
-import { enableARolePlayPushNotifications } from "./notification.js";
 
 const esc=v=>String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
 const initials=n=>{let a=String(n||"Usuário").trim().split(/\s+/);return (a[0]?.[0]||"?")+(a.length>1?a.at(-1)[0]:"");};
@@ -157,7 +156,7 @@ export function render(){
   const menu=$("#profileMenu"),settings=$("#settings");
   const closeMenu=()=>{menu.hidden=true;settings.setAttribute("aria-expanded","false")};
   settings.onclick=e=>{e.stopPropagation();menu.hidden=!menu.hidden;settings.setAttribute("aria-expanded",String(!menu.hidden))};
-  menu.onclick=e=>{const b=e.target.closest("button[data-menu]");if(!b)return;const action=b.dataset.menu;closeMenu();if(action==="logout"){signOut(auth).catch(err=>{console.error(err);toast("Não foi possível sair." )});return}if(action==="support"){window.location.href="mailto:machado.matheus@live.com?subject=Suporte%20-%20RPG";return}if(action==="notifications"){
+  menu.onclick=async e=>{const b=e.target.closest("button[data-menu]");if(!b)return;const action=b.dataset.menu;closeMenu();if(action==="logout"){signOut(auth).catch(err=>{console.error(err);toast("Não foi possível sair." )});return}if(action==="support"){window.location.href="mailto:machado.matheus@live.com?subject=Suporte%20-%20RPG";return}if(action==="notifications"){
       try{
         b.disabled=true;
         const token=await enableARolePlayPushNotifications();
