@@ -159,14 +159,16 @@ export function render(){
   menu.onclick=async e=>{const b=e.target.closest("button[data-menu]");if(!b)return;const action=b.dataset.menu;closeMenu();if(action==="logout"){signOut(auth).catch(err=>{console.error(err);toast("Não foi possível sair." )});return}if(action==="support"){window.location.href="mailto:machado.matheus@live.com?subject=Suporte%20-%20RPG";return}if(action==="notifications"){
       try{
         b.disabled=true;
+        b.setAttribute("aria-busy","true");
         const token=await enableARolePlayPushNotifications();
-        b.disabled=false;
         if(token) toast("Notificações ativadas neste aparelho.");
         else toast("Permissão de notificações não concedida.");
       }catch(e){
         console.error("[A Role Play] Erro ao ativar notificações:",e);
-        b.disabled=false;
         toast(`Não foi possível ativar notificações: ${e?.message||e?.code||"erro desconhecido"}`);
+      } finally {
+        b.disabled=false;
+        b.removeAttribute("aria-busy");
       }
       return;
     }if(action==="profile"){const m=open("Editar perfil",`<label>Nome de usuário</label><input class="mi" id="newname" maxlength="30" value="${esc(me.username)}"><div style="height:12px"></div><label>E-mail</label><input class="mi" id="newemail" type="email" value="${esc(u.email||"")}" placeholder="Seu e-mail"><p style="color:var(--text-muted);font-size:.72rem;margin:8px 0 14px">A alteração do e-mail e da senha pode exigir autenticação recente.</p><button type="button" class="btn" id="requestEmail" style="width:100%;margin-bottom:8px">Solicitar troca de e-mail</button><button type="button" class="btn" id="requestPassword" style="width:100%">Solicitar troca de senha</button>`,`<div class="mf"><button type="button" class="btn" id="cancel">Cancelar</button><button type="button" class="btn primary" id="save">Salvar nome</button></div>`);m.querySelector("#cancel").onclick=close;m.querySelector("#save").onclick=async()=>{const n=m.querySelector("#newname").value.trim();if(n.length<3||n.length>30)return toast("Nome deve ter entre 3 e 30 caracteres.");try{if(n!==me.username){await updateProfile(u,{displayName:n});await updateDoc(doc(db,"users",u.uid),{username:n});me.username=n}close();toast("Perfil atualizado.")}catch(e){console.error(e);toast("Não foi possível atualizar o perfil.")}};m.querySelector("#requestEmail").onclick=async()=>{const email=m.querySelector("#newemail").value.trim();if(!email||!email.includes("@"))return toast("Digite um e-mail válido.");try{await updateProfile(u,{displayName:me.username});await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js").then(({sendEmailVerification})=>sendEmailVerification(u));toast("Solicitação iniciada. Verifique seu e-mail.")}catch(e){console.error(e);toast(e.code==="auth/requires-recent-login"?"Entre novamente para solicitar a troca.":"Não foi possível solicitar a troca.")}};m.querySelector("#requestPassword").onclick=async()=>{try{const {sendPasswordResetEmail}=await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");await sendPasswordResetEmail(auth,u.email);toast("Link para trocar a senha enviado para seu e-mail.")}catch(e){console.error(e);toast("Não foi possível enviar o link de troca de senha.")}};}};
