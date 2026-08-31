@@ -120,6 +120,7 @@ export function render() {
         text-align: left;
 
         border-radius: 10px;
+        position: relative;
 
         transition:
           background-color .2s ease,
@@ -145,6 +146,25 @@ export function render() {
         transform:
           scale(.97);
 
+      }
+
+
+      .home-profile-notification-dot {
+        position: absolute;
+        top: 5px;
+        right: 2px;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: #a83b47;
+        border: 2px solid var(--bg-primary);
+        box-sizing: content-box;
+        display: none;
+        pointer-events: none;
+      }
+
+      .home-profile-button.has-notification .home-profile-notification-dot {
+        display: block;
       }
 
 
@@ -1154,6 +1174,7 @@ export function render() {
           <span id="home-username">
             Carregando...
           </span>
+          <span class="home-profile-notification-dot" id="home-profile-notification-dot" aria-label="Nova solicitação de amizade"></span>
 
         </button>
 
@@ -1249,66 +1270,29 @@ export function render() {
       >
 
         <svg
-          viewBox="0 0 64 64"
+          viewBox="0 0 48 48"
           fill="none"
-          xmlns="http://www.w3.org/2000/svg"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
         >
 
           <path
-            d="M7 16L22 11V51L7 56V16Z"
-            stroke="currentColor"
-            stroke-width="2.5"
-            stroke-linejoin="round"
+            d="M7 13L17 9L31 13L41 9V35L31 39L17 35L7 39V13Z"
           />
 
-          <path
-            d="M22 11L42 16V56L22 51V11Z"
-            stroke="currentColor"
-            stroke-width="2.5"
-            stroke-linejoin="round"
-          />
-
-          <path
-            d="M42 16L57 11V51L42 56V16Z"
-            stroke="currentColor"
-            stroke-width="2.5"
-            stroke-linejoin="round"
-          />
-
-          <path
-            d="M12 28L17 26"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-          />
-
-          <path
-            d="M27 22L36 25"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-          />
-
-          <path
-            d="M47 31L53 28"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-          />
-
-          <path
-            d="M32 31C35 31 37 33.2 37 36C37 40 32 44 32 44C32 44 27 40 27 36C27 33.2 29 31 32 31Z"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linejoin="round"
-          />
+          <path d="M17 9V35"/>
+          <path d="M31 13V39"/>
 
           <circle
-            cx="32"
-            cy="36"
-            r="1.5"
-            fill="currentColor"
+            cx="24"
+            cy="23"
+            r="4"
           />
+
+          <path d="M24 19V27"/>
+          <path d="M20 23H28"/>
 
         </svg>
 
@@ -1328,6 +1312,9 @@ export function render() {
 
   const profileButton =
     container.querySelector("#home-profile-button");
+
+  const profileNotificationDot =
+    container.querySelector("#home-profile-notification-dot");
 
   const searchInput =
     container.querySelector("#table-search");
@@ -1354,6 +1341,36 @@ export function render() {
 
     }
   );
+
+
+  // =======================================================
+  // NOTIFICAÇÕES DE AMIZADE — TEMPO REAL
+  // =======================================================
+
+  const stopFriendRequestListener = onSnapshot(
+    collection(db, "users", user.uid, "friendRequests"),
+    snapshot => {
+      const hasRequests = snapshot.docs.some(d => !d.data()?.cancelled);
+      profileButton.classList.toggle("has-notification", hasRequests);
+      profileNotificationDot.hidden = !hasRequests;
+    },
+    error => {
+      console.warn("Notificações de amizade:", error);
+      profileButton.classList.remove("has-notification");
+      profileNotificationDot.hidden = true;
+    }
+  );
+
+  // Evita deixar listeners vivos quando a Home sai do DOM.
+  const homeObserver = new MutationObserver(() => {
+    if (!container.isConnected) {
+      stopFriendRequestListener();
+      homeObserver.disconnect();
+    }
+  });
+  if (container.parentNode) {
+    homeObserver.observe(container.parentNode, { childList: true, subtree: true });
+  }
 
 
   createTableButton.addEventListener(

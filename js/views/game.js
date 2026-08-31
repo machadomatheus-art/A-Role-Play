@@ -15,6 +15,7 @@
 // ============================================================
 
 import { auth, db } from "../firebase-config.js";
+import { sendARolePlayPush } from "../notification.js";
 
 import {
   collection,
@@ -122,7 +123,7 @@ function svgIcon(name, cls = "") {
     settings: `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.6 3.6h4.8l.7 2.35c.47.2.91.45 1.32.76l2.38-.45 2.4 4.16-1.68 1.73c.04.28.06.56.06.85s-.02.57-.06.85l1.68 1.73-2.4 4.16-2.38-.45c-.41.31-.85.56-1.32.76l-.7 2.35H9.6l-.7-2.35a8 8 0 0 1-1.32-.76l-2.38.45-2.4-4.16 1.68-1.73a6.6 6.6 0 0 1 0-1.7L2.8 10.42l2.4-4.16 2.38.45c.41-.31.85-.56 1.32-.76L9.6 3.6Z"/><circle cx="12" cy="13" r="2.9"/></svg>`,
     trash: `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v6m4-6v6"/></svg>`,
     exit: `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h8"/><path d="m13 8 4 4-4 4M17 12H8"/></svg>`,
-    table: `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v14H4z"/><path d="M4 9h16M8 5v14M16 5v14"/></svg>`,
+    table: `<svg class="${cls}" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 13L17 9L31 13L41 9V35L31 39L17 35L7 39V13Z"/><path d="M17 9V35"/><path d="M31 13V39"/><circle cx="24" cy="23" r="4"/><path d="M24 19V27"/><path d="M20 23H28"/></svg>`, 
     crown: `<svg class="${cls}" viewBox="0 0 24 24" fill="currentColor"><path d="M4 18h16l1-9-5 3-4-7-4 7-5-3 1 9Zm1.2 2h13.6a1 1 0 0 1 0 2H5.2a1 1 0 0 1 0-2Z"/></svg>`,
     mute: `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="m17 9 4 4m0-4-4 4"/></svg>`,
     kick: `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6v3H9zM5 8h14l-1 12H6L5 8Z"/><path d="M9 12v5m6-5v5"/></svg>`,
@@ -205,7 +206,7 @@ function stripParserCodes(text = "") {
 
 function findComposerToken(text, cursor) {
   const before = text.slice(0, cursor);
-  const match = before.match(/(?:^|[\s([\{,;:!?])([/@&])([\p{L}\p{N}_-]*)$/u);
+  const match = before.match(/(?:^|[\s([\{,;:!?])([/@&$])([\p{L}\p{N}_-]*)$/u);
   if (!match) return null;
   return { prefix: match[1], query: match[2] || "", start: cursor - (match[2] || "").length - 1 };
 }
@@ -247,13 +248,24 @@ function updateComposerAssist(root) {
   } else if (token.prefix === "&") {
     if (!state.isMaster) return hideComposerAssist(root);
     const commands = [
-      { value:"&give{}", title:"&give{}", subtitle:"Entregar item a um personagem", kind:"command" },
-      { value:"&recover{}", title:"&recover{}", subtitle:"Recuperar recurso de um personagem", kind:"command" },
-      { value:"&break{}", title:"&break{}", subtitle:"Remover/quebrar item de um personagem", kind:"command" },
-      { value:"&kill{}", title:"&kill{}", subtitle:"Declarar personagem morto", kind:"command" }
+      { value:"&give{}", title:"&give{}", subtitle:"Entregar ou retirar item de um personagem", kind:"command" },
+      { value:"&recover{}", title:"&recover{}", subtitle:"Recuperar ou retirar recurso", kind:"command" },
+      { value:"&set{}", title:"&set{}", subtitle:"Aplicar ou remover um estado", kind:"command" }
     ];
     const q = token.query.toLocaleLowerCase("pt-BR");
     options = commands.filter(c => !q || c.value.toLocaleLowerCase("pt-BR").includes(q));
+  } else if (token.prefix === "$") {
+    const equipment = state.table?.configuration?.equipmentSettings || state.table?.configuration?.equipment || {};
+    if (!equipment.financeEnabled) return hideComposerAssist(root);
+    const currencies = Array.isArray(equipment.currencyTypes) ? equipment.currencyTypes : [];
+    const qName = token.query.toLocaleLowerCase("pt-BR");
+    options = currencies.filter(raw => {
+      const label = typeof raw === "object" ? (raw.name || raw.label || raw.code) : raw;
+      return !qName || String(label || "").toLocaleLowerCase("pt-BR").includes(qName);
+    }).slice(0,4).map(raw => {
+      const label = typeof raw === "object" ? (raw.name || raw.label || raw.code) : raw;
+      return { value:`$${label}{}`, title:`$${label}{}`, subtitle:"Alterar moeda da ficha", kind:"command" };
+    });
   } else {
     const q = token.query.toLocaleLowerCase("pt-BR");
     options = state.members.filter(m => m.uid !== state.user.uid).filter(m => {
@@ -880,7 +892,8 @@ async function loadMembers() {
       } catch (avatarError) {
         console.warn("Falha ao carregar avatar do membro", uid, avatarError);
       }
-      members.push({ uid, ...snap.data(), avatarDataUrl });
+      const userData = snap.data() || {};
+      members.push({ uid, ...userData, avatarDataUrl, characterName: userData.characterName || userData.character?.name || userData.currentCharacterName || "Sem personagem" });
     } catch (error) {
       console.warn("Falha ao carregar membro", uid, error);
     }
@@ -917,14 +930,14 @@ function syncMemberSubscriptions(root) {
 
     // Se os detalhes da mesa estiverem abertos, atualiza a lista sem exigir
     // que o usuário feche e abra novamente.
-    const list = document.querySelector(".rp-modal-backdrop .rp-members-list");
+    const list = document.querySelector(".rp-table-details-backdrop .rp-members-list");
     if (list) {
       const rows = state.members.map(member => {
         const master = member.uid === state.table.ownerId;
         const mine = member.uid === state.user.uid;
         const muted = Array.isArray(state.table.mutedMembers) && state.table.mutedMembers.includes(member.uid);
         const photo = member.avatarDataUrl || "";
-        return `<button class="rp-member-row" data-member="${esc(member.uid)}" type="button"><span class="rp-member-avatar">${photo ? `<img src="${esc(photo)}" alt="">` : esc(initials(member.username))}</span><span class="rp-member-main"><strong>${esc(member.username || "Usuário")}</strong><small>${master ? "Mestre" : "Player"}${muted ? " · silenciado" : ""}</small></span>${master ? `<span class="rp-crown">${svgIcon("crown")}</span>` : ""}${!mine ? `<span class="rp-member-chevron">›</span>` : ""}</button>`;
+        return `<button class="rp-member-row" data-member="${esc(member.uid)}" type="button"><span class="rp-member-avatar">${photo ? `<img src="${esc(photo)}" alt="">` : esc(initials(member.username))}</span><span class="rp-member-main"><strong>${esc(member.username || "Usuário")}</strong><small>${esc(member.characterName || member.character || "Sem personagem")}${muted ? " · silenciado" : ""}</small></span>${master ? `<span class="rp-crown">${svgIcon("crown")}</span>` : ""}${!mine ? `<span class="rp-member-chevron">›</span>` : ""}</button>`;
       }).join("");
       list.innerHTML = rows || `<div class="rp-empty">Nenhum membro.</div>`;
       list.querySelectorAll(".rp-member-row").forEach(row => row.addEventListener("click", () => {
@@ -1076,7 +1089,6 @@ function buildShell() {
 
 function bindShell(root) {
   root.querySelector("#rp-back")?.addEventListener("click", async () => { await clearUnread(); navigate("/home"); });
-  root.querySelector("#rp-table-details")?.addEventListener("click", () => openTableDetails(root));
   root.querySelector("#rp-header-more")?.addEventListener("click", () => openTableDetails(root));
 
   const input = root.querySelector("#rp-input");
@@ -1660,10 +1672,49 @@ async function executeDecreaseCommand(args) {
   return executeResourceCommand(args, "decrease");
 }
 
+async function executeSetCommand(args) {
+  if (!state.isMaster) throw new Error("Somente o mestre pode aplicar estados.");
+  const [characterName, stateName, action] = args;
+  if (!characterName || !stateName || !action) throw new Error("Use: &set{personagem; estado; on/off} ou &set{personagem; dead}");
+  const target = await findCharacterTarget(characterName);
+  if (!target) throw new Error(`Personagem "${characterName}" não encontrado.`);
+  const normalized = String(action).trim().toLowerCase();
+  const ref = target.ref;
+  const snap = await getDoc(ref);
+  const character = snap.exists() ? (snap.data() || {}) : target.character || {};
+  if (String(stateName).trim().toLowerCase() === "dead") {
+    await updateDoc(ref, { status: "dead", alive: false, death: { at: serverTimestamp(), byUid: state.user.uid } });
+    await postNPC(`${characterName} está morto.\nFoi um prazer lutar ao seu lado!\n🪦R.I.P.`, { systemEvent: "character-killed", actorUid: state.user.uid, targetUid: target.member.uid });
+    return;
+  }
+  if (!["on", "off"].includes(normalized)) throw new Error("O estado deve terminar com on ou off.");
+  const key = String(stateName).trim();
+  // A ficha trabalha com estados aplicados como uma lista de identificadores/objetos.
+  // Mantemos compatibilidade com fichas antigas que eventualmente tenham salvo
+  // o campo states como mapa { Estado: true/false }, convertendo apenas o necessário.
+  const rawStates = character.states;
+  const states = Array.isArray(rawStates)
+    ? rawStates.slice()
+    : (rawStates && typeof rawStates === "object"
+      ? Object.entries(rawStates).filter(([, enabled]) => enabled).map(([name]) => ({ id: name, name }))
+      : []);
+  const wanted = key.toLocaleLowerCase("pt-BR");
+  const matches = value => {
+    if (typeof value === "string") return value.trim().toLocaleLowerCase("pt-BR") === wanted;
+    if (!value || typeof value !== "object") return false;
+    return [value.id, value.name, value.label].filter(Boolean)
+      .some(v => String(v).trim().toLocaleLowerCase("pt-BR") === wanted);
+  };
+  const nextStates = states.filter(value => !matches(value));
+  if (normalized === "on") nextStates.push({ id: key, name: key });
+  await updateDoc(ref, { states: nextStates, updatedAt: serverTimestamp() });
+  await postNPC(normalized === "on" ? `😵‍💫 ${characterName} está ${key}.` : `🙂 ${characterName} não está mais ${key}.`, { systemEvent: "character-state", actorUid: state.user.uid, targetUid: target.member.uid, stateName: key, enabled: normalized === "on" });
+}
+
 async function executeGiveCommand(args) {
   if (!state.isMaster) throw new Error("Somente o mestre pode entregar itens por comando.");
-  const [characterName, itemName, quantityRaw, descriptionRaw] = args;
-  if (!characterName || !itemName || !quantityRaw) throw new Error("Use: &give{personagem; item; quantidade; descrição}");
+  const [characterName, itemName, descriptionRaw, quantityRaw] = args;
+  if (!characterName || !itemName || !quantityRaw) throw new Error("Use: &give{personagem; item; descrição; carga}");
   const target = await findCharacterTarget(characterName);
   if (!target) throw new Error(`Personagem "${characterName}" não encontrado.`);
   const member = target.member;
@@ -1734,14 +1785,135 @@ async function executeKillCommand(args) {
   await postNPC(`☠️ **${characterName}** caiu em combate. A ficha foi preservada como registro da campanha.`, { systemEvent: "character-killed", actorUid: state.user.uid, targetUid: member.uid });
 }
 
+
+function configuredCurrencyName(name) {
+  const equipment = state.table?.configuration?.equipmentSettings || state.table?.configuration?.equipment || {};
+  if (!equipment.financeEnabled) return null;
+  const list = Array.isArray(equipment.currencyTypes) ? equipment.currencyTypes : [];
+  const wanted = String(name || "").trim().toLocaleLowerCase("pt-BR");
+  return list.find(raw => {
+    const label = typeof raw === "object" ? (raw.name || raw.label || raw.code) : raw;
+    return String(label || "").trim().toLocaleLowerCase("pt-BR") === wanted;
+  }) || null;
+}
+
+async function executeCurrencyParser(raw) {
+  const match = String(raw || "").trim().match(/^\$([^{};]+)\{\s*([+-]?\d+(?:[.,]\d+)?)\s*;\s*([^{}]+?)\s*\}$/u);
+  if (!match) return false;
+
+  const currencyInput = match[1].trim();
+  const amount = Number(match[2].replace(",", "."));
+  const recipientInput = String(match[3] || "").trim();
+  const equipment = state.table?.configuration?.equipmentSettings || state.table?.configuration?.equipment || {};
+
+  if (!equipment.financeEnabled) throw new Error("O sistema financeiro desta mesa está desativado.");
+  const currency = configuredCurrencyName(currencyInput);
+  if (!currency) throw new Error(`A moeda "${currencyInput}" não está definida nesta mesa.`);
+  if (!Number.isFinite(amount) || amount === 0) throw new Error("O valor da transferência deve ser diferente de zero.");
+  if (!recipientInput) throw new Error("Informe o personagem destinatário.");
+
+  const entryName = typeof currency === "object" ? (currency.name || currency.label || currency.code) : currency;
+  const key = String(entryName || currencyInput).trim();
+  const tableRef = doc(db, "tables", state.tableId);
+  const isTableRecipient = /^(?:a\s+mesa|mesa)$/iu.test(recipientInput);
+
+  // Mestre: lançamento direto na ficha de outro personagem.
+  if (state.isMaster) {
+    if (isTableRecipient) throw new Error("O mestre deve informar um personagem destinatário.");
+    if (!amount) throw new Error("Valor inválido.");
+
+    const target = await findCharacterTarget(recipientInput);
+    if (!target) throw new Error(`Personagem "${recipientInput}" não encontrado.`);
+    const targetRef = target.ref;
+    const targetSnap = await getDoc(targetRef);
+    if (!targetSnap.exists()) throw new Error(`A ficha de "${recipientInput}" não existe.`);
+    const character = targetSnap.data() || {};
+    const finances = { ...(character.finances || {}) };
+    const current = Number(finances[key] ?? 0);
+    if (!Number.isFinite(current)) throw new Error(`O saldo atual de ${key} na ficha é inválido.`);
+    const next = current + amount;
+    if (next < 0) throw new Error(`O saldo de ${key} de ${recipientInput} não pode ficar negativo.`);
+    finances[key] = next;
+    await setDoc(targetRef, firestoreSafe({ ...character, finances, updatedAt: serverTimestamp() }), { merge: true });
+
+    const verb = amount > 0 ? "creditou" : "debitou";
+    await postNPC(`💱 ${memberName(state.user.uid)} ${verb} ${key}: ${Math.abs(amount)} na ficha de ${target.character?.profile?.name || target.character?.name || recipientInput}.`, {
+      systemEvent: "currency-transfer", actorUid: state.user.uid, targetUid: target.member.uid,
+      privateTo: [state.user.uid, target.member.uid].filter(Boolean), currency: key, quantity: amount
+    });
+    return true;
+  }
+
+  // Player: somente transferência positiva, saindo da própria ficha.
+  if (amount < 0) throw new Error("Players só podem transferir valores positivos.");
+  if (isTableRecipient) {
+    const ownRef = doc(db, "tables", state.tableId, "characters", state.user.uid);
+    const ownSnap = await getDoc(ownRef);
+    if (!ownSnap.exists()) throw new Error("Você ainda não possui uma ficha nesta mesa.");
+    const own = ownSnap.data() || {};
+    const ownFinances = { ...(own.finances || {}) };
+    const current = Number(ownFinances[key] ?? 0);
+    if (!Number.isFinite(current) || current < amount) throw new Error(`Saldo insuficiente de ${key}.`);
+    ownFinances[key] = current - amount;
+    const tableSnap = await getDoc(tableRef);
+    const table = tableSnap.data() || {};
+    const tableFinances = { ...(table.finances || {}) };
+    const tableCurrent = Number(tableFinances[key] ?? 0);
+    if (!Number.isFinite(tableCurrent)) throw new Error(`O saldo de ${key} da mesa é inválido.`);
+    tableFinances[key] = tableCurrent + amount;
+    await setDoc(ownRef, firestoreSafe({ ...own, finances: ownFinances, updatedAt: serverTimestamp() }), { merge: true });
+    await updateDoc(tableRef, { finances: tableFinances });
+
+    const characterName = own.profile?.name || own.name || memberName(state.user.uid) || "Personagem";
+    await postNPC(`💱 ${characterName} realizou uma transferência de ${key}: ${amount} para a mesa.`, {
+      systemEvent: "currency-transfer", actorUid: state.user.uid, targetUid: state.user.uid,
+      privateTo: [state.user.uid, state.table.ownerId].filter(Boolean), currency: key, quantity: amount, recipient: "mesa"
+    });
+    return true;
+  }
+
+  const target = await findCharacterTarget(recipientInput);
+  if (!target) throw new Error(`Personagem "${recipientInput}" não encontrado.`);
+  if (target.member?.uid === state.user.uid) throw new Error("Você não pode transferir para a própria ficha.");
+
+  const ownRef = doc(db, "tables", state.tableId, "characters", state.user.uid);
+  const ownSnap = await getDoc(ownRef);
+  if (!ownSnap.exists()) throw new Error("Você ainda não possui uma ficha nesta mesa.");
+  const targetSnap = await getDoc(target.ref);
+  if (!targetSnap.exists()) throw new Error(`A ficha de "${recipientInput}" não existe.`);
+
+  const own = ownSnap.data() || {};
+  const targetCharacter = targetSnap.data() || {};
+  const ownFinances = { ...(own.finances || {}) };
+  const targetFinances = { ...(targetCharacter.finances || {}) };
+  const ownCurrent = Number(ownFinances[key] ?? 0);
+  const targetCurrent = Number(targetFinances[key] ?? 0);
+  if (!Number.isFinite(ownCurrent) || ownCurrent < amount) throw new Error(`Saldo insuficiente de ${key}.`);
+  if (!Number.isFinite(targetCurrent)) throw new Error(`O saldo atual de ${key} do destinatário é inválido.`);
+
+  ownFinances[key] = ownCurrent - amount;
+  targetFinances[key] = targetCurrent + amount;
+  await setDoc(ownRef, firestoreSafe({ ...own, finances: ownFinances, updatedAt: serverTimestamp() }), { merge: true });
+  await setDoc(target.ref, firestoreSafe({ ...targetCharacter, finances: targetFinances, updatedAt: serverTimestamp() }), { merge: true });
+
+  const characterName = own.profile?.name || own.name || memberName(state.user.uid) || "Personagem";
+  const recipientName = targetCharacter.profile?.name || targetCharacter.name || recipientInput;
+  await postNPC(`💱 ${characterName} realizou uma transferência de ${key}: ${amount} para ${recipientName}.`, {
+    systemEvent: "currency-transfer", actorUid: state.user.uid, targetUid: target.member.uid,
+    privateTo: [state.user.uid, target.member.uid].filter(Boolean), currency: key, quantity: amount, recipient: recipientName
+  });
+  return true;
+}
+
 async function executeChatCommand(raw) {
-  const match = String(raw || "").trim().match(/^&(give|break|kill|recover|decrease)\s*\{([\s\S]*)\}$/i);
+  const match = String(raw || "").trim().match(/^&(set|give|recover|break|kill|decrease)\s*\{([\s\S]*)\}$/i);
   if (!match) return false;
   if (!state.isMaster) { toast("Somente o mestre pode usar comandos de mesa.", "error"); return true; }
   const command = match[1].toLowerCase();
   const args = splitCommandArgs(match[2]);
   try {
-    if (command === "give") await executeGiveCommand(args);
+    if (command === "set") await executeSetCommand(args);
+    else if (command === "give") await executeGiveCommand(args);
     else if (command === "break") await executeBreakCommand(args);
     else if (command === "kill") await executeKillCommand(args);
     else if (command === "recover") await executeRecoverCommand(args);
@@ -1758,6 +1930,28 @@ async function executeChatCommand(raw) {
 // ENVIO
 // ============================================================
 
+async function notifyTablePush({ text, senderUid = state.user?.uid, senderName = state.user?.displayName || "Usuário", recipientUids = null, type = "message" } = {}) {
+  if (!text || !state.tableId) return;
+  const ids = Array.isArray(recipientUids)
+    ? recipientUids.filter(uid => uid && uid !== senderUid)
+    : (Array.isArray(state.table?.members) ? state.table.members.filter(uid => uid && uid !== senderUid) : []);
+  if (!ids.length) return;
+  try {
+    await sendARolePlayPush({
+      tableId: state.tableId,
+      tableName: state.table?.name || "A Role Play",
+      senderUid,
+      senderName,
+      body: text,
+      recipientUids: ids,
+      type
+    });
+  } catch (error) {
+    // Push nunca pode impedir o envio da mensagem para o Firestore.
+    console.warn("[A Role Play] Push da mesa não enviado:", error);
+  }
+}
+
 async function sendText(root) {
   const input = root.querySelector("#rp-input");
   if (!input) return;
@@ -1768,7 +1962,23 @@ async function sendText(root) {
   // imediatamente. O envio anterior esperava toda a transação do Firestore
   // terminar antes de limpar o input, permitindo vários cliques e acumulando
   // execuções do mesmo comando.
-  const isTableCommand = /^&(give|break|kill|recover|decrease)\s*\{[\s\S]*\}$/i.test(rawText);
+  const isCurrencyParser = /^\$[^{};]+\{\s*[+-]?\d+(?:[.,]\d+)?\s*;\s*[^{}]+?\s*\}$/u.test(rawText);
+  if (isCurrencyParser) {
+    if (state.sending || state.mutedByTable) {
+      if (state.mutedByTable) toast("Você está silenciado nesta mesa.", "error");
+      return;
+    }
+    state.sending = true;
+    root.querySelector("#rp-send")?.classList.add("loading");
+    input.value = ""; input.style.height = "auto";
+    clearTimeout(state.typingTimer); setTyping(false);
+    try { await executeCurrencyParser(rawText); }
+    catch (error) { console.error("Parser de moeda:", error); toast(error.message || "Não foi possível alterar a moeda.", "error"); }
+    finally { state.sending = false; root.querySelector("#rp-send")?.classList.remove("loading"); }
+    return;
+  }
+
+  const isTableCommand = /^&(set|give|break|kill|recover|decrease)\s*\{[\s\S]*\}$/i.test(rawText);
   if (isTableCommand) {
     if (!state.isMaster) {
       toast("Somente o mestre pode usar comandos de mesa.", "error");
@@ -1831,6 +2041,7 @@ async function sendText(root) {
       lastMessageAt: serverTimestamp()
     }).catch(() => {});
     await bumpUnread(state.user.uid);
+    void notifyTablePush({ text, senderUid: state.user.uid, senderName: state.user.displayName || "Usuário", type: "message" });
   } catch (error) {
     console.error("Erro ao enviar mensagem:", error);
     toast(error.code === "permission-denied" ? "Você não tem permissão para enviar mensagens." : "Não foi possível enviar a mensagem.", "error");
@@ -1875,6 +2086,7 @@ async function handlePhoto(root, file) {
       lastMessageAt: serverTimestamp()
     }).catch(() => {});
     await bumpUnread(state.user.uid);
+    void notifyTablePush({ text: "📷 Foto", senderUid: state.user.uid, senderName: state.user.displayName || "Usuário", type: "image" });
   } catch (error) {
     console.error("Erro ao enviar foto:", error);
     toast(error.message || "Não foi possível enviar a foto.", "error");
@@ -2051,7 +2263,8 @@ function declarationBonusDetails(item) {
   return codes.filter(code => !active.length || active.includes(code)).map(code => {
     const attr = findAttribute(code);
     const base = configuredAttributeValue(code);
-    return { code, name: attr?.name || code, base, extra: base, total: base, expression: `[${code}+!]` };
+    const sign = base >= 0 ? "+" : "";
+    return { code, name: attr?.name || code, base, extra: base, total: base, expression: `[${code}${sign}${base}]` };
   });
 }
 
@@ -2500,6 +2713,13 @@ async function submitRoll(modal) {
     }));
     await updateDoc(doc(db, "tables", state.tableId), { lastMessage: `🎲 ${memberName(state.user.uid)} rolou ${total}.`, lastMessageAt: serverTimestamp() }).catch(() => {});
     await bumpUnread();
+    void notifyTablePush({
+      text: `🎲 ${memberName(state.user.uid)} rolou ${total}.`,
+      senderUid: state.user.uid,
+      senderName: memberName(state.user.uid),
+      recipientUids: [state.table.ownerId, state.user.uid].filter(Boolean),
+      type: "roll"
+    });
   } catch (error) { console.error(error); toast("Não foi possível registrar a rolagem.", "error"); }
   finally {
     state.rollSubmitting = false;
@@ -2526,6 +2746,13 @@ async function postNPC(text, extra = {}) {
     lastMessageAt: serverTimestamp()
   }).catch(() => {});
   await bumpUnread();
+  void notifyTablePush({
+    text: botText,
+    senderUid: "NPC",
+    senderName: ".NPC",
+    recipientUids: Array.isArray(extra.privateTo) && extra.privateTo.length ? extra.privateTo : null,
+    type: extra.systemEvent || "bot"
+  });
 }
 
 async function finishTurn() {
@@ -2564,38 +2791,81 @@ async function finishTurn() {
 // ============================================================
 
 function openTableDetails(root) {
+  closeModal();
+  const backdrop = document.createElement("div");
+  backdrop.className = "rp-table-details-backdrop";
   const membersHTML = state.members.map(member => {
     const master = member.uid === state.table.ownerId;
     const mine = member.uid === state.user.uid;
     const muted = Array.isArray(state.table.mutedMembers) && state.table.mutedMembers.includes(member.uid);
-    return `
-      <button class="rp-member-row" data-member="${esc(member.uid)}" type="button">
-        <span class="rp-member-avatar">${member.avatarDataUrl ? `<img src="${esc(member.avatarDataUrl)}" alt="">` : esc(initials(member.username))}</span>
-        <span class="rp-member-main"><strong>${esc(member.username || "Usuário")}</strong><small>${master ? "Mestre" : "Player"}${muted ? " · silenciado" : ""}</small></span>
-        ${master ? `<span class="rp-crown">${svgIcon("crown")}</span>` : ""}
-        ${!mine ? `<span class="rp-member-chevron">›</span>` : ""}
-      </button>`;
+    const character = member.characterName || member.character || "Sem personagem";
+    const photo = member.avatarDataUrl || member.photoURL || "";
+    return `<button class="rp-member-row" data-member="${esc(member.uid)}" type="button">
+      <span class="rp-member-avatar">${photo ? `<img src="${esc(photo)}" alt="">` : esc(initials(member.username))}</span>
+      <span class="rp-member-main"><strong>${esc(member.username || "Usuário")}</strong><small>${esc(character)}${muted ? " · silenciado" : ""}</small></span>
+      ${master ? `<span class="rp-crown">${svgIcon("crown")}</span>` : ""}${!mine ? `<span class="rp-member-chevron">›</span>` : ""}
+    </button>`;
   }).join("");
+  backdrop.innerHTML = `<div class="rp-table-details" role="dialog" aria-modal="true">
+    <div class="rp-details-top">
+      <button id="rp-details-back" type="button" aria-label="Voltar">${svgIcon("back")}</button>
+      <strong>Detalhes da mesa</strong>
+      ${state.isMaster ? `<button id="rp-details-settings" type="button" aria-label="Configurações">${svgIcon("settings")}</button>` : `<span></span>`}
+    </div>
+    <div class="rp-details-scroll">
+      <div class="rp-details-avatar">${svgIcon("table")}</div>
+      <h1>${esc(state.table.name || "Mesa sem nome")}</h1>
+      <p class="rp-details-members-count">Mesa de RPG • ${state.members.length} ${state.members.length === 1 ? "membro" : "membros"}</p>
+      <div class="rp-details-description">${esc(state.table.description || "Esta mesa ainda não possui uma descrição.")}</div>
+      ${state.isMaster ? `<button class="rp-primary rp-add-member-wide" id="rp-add-member" type="button">${svgIcon("users")} Adicionar membro</button>` : ""}
+      <section class="rp-details-section"><div class="rp-section-head"><h3>Membros</h3></div><div class="rp-members-list">${membersHTML || `<div class="rp-empty">Nenhum membro.</div>`}</div></section>
+      <button class="rp-leave-table" id="rp-leave-table" type="button">${svgIcon("exit")} <span>${state.isMaster ? "Abandonar mesa" : "Abandonar mesa"}</span></button>
+    </div>
+  </div>`;
+  document.body.appendChild(backdrop);
+  requestAnimationFrame(() => backdrop.classList.add("show"));
+  backdrop.querySelector("#rp-details-back")?.addEventListener("click", () => closeTableDetails());
+  backdrop.querySelector("#rp-details-settings")?.addEventListener("click", () => openTableDetailsSettings(backdrop));
+  backdrop.querySelector("#rp-add-member")?.addEventListener("click", () => openAddMember());
+  backdrop.querySelector("#rp-leave-table")?.addEventListener("click", () => confirmTableAction("Abandonar mesa", "Você deixará de participar desta mesa.", async () => { await updateDoc(doc(db, "tables", state.tableId), { members: arrayRemove(state.user.uid), [`unreadCounts.${state.user.uid}`]: 0 }); closeTableDetails(); navigate("/home"); }));
+  backdrop.querySelectorAll(".rp-member-row").forEach(row => row.addEventListener("click", () => { if (row.dataset.member !== state.user.uid && state.isMaster) openMemberActions(row.dataset.member); }));
+}
 
-  const body = `
-    <div class="rp-details">
-      <div class="rp-details-cover">
-        <div class="rp-details-map">✦</div>
-        <div><strong>${esc(state.table.name || "Mesa")}</strong><span>${esc(state.table.description || "Mesa de RPG")}</span></div>
-      </div>
-      <section class="rp-details-section">
-        <div class="rp-section-head"><h3>Membros</h3>${state.isMaster ? `<button id="rp-add-member" class="rp-icon-button" type="button" aria-label="Adicionar membro">${svgIcon("paper")}</button>` : ""}</div>
-        <div class="rp-members-list">${membersHTML || `<div class="rp-empty">Nenhum membro.</div>`}</div>
-      </section>
-      ${state.isMaster ? `<section class="rp-details-section"><button class="rp-setting-row" id="rp-settings" type="button">${svgIcon("settings")}<span><strong>Configurações da mesa</strong><small>Turnos, modo livre e regras da ficha</small></span><b>›</b></button></section>` : ""}
-    </div>`;
+function closeTableDetails() {
+  const el = document.querySelector(".rp-table-details-backdrop");
+  if (!el) return;
+  el.classList.remove("show");
+  setTimeout(() => el.remove(), 220);
+}
 
-  const modal = openModal(state.table.name || "Detalhes da mesa", body);
-  modal.querySelector("#rp-add-member")?.addEventListener("click", () => openAddMember());
-  modal.querySelector("#rp-settings")?.addEventListener("click", () => openTableSettings());
-  modal.querySelectorAll(".rp-member-row").forEach(row => row.addEventListener("click", () => {
-    if (row.dataset.member !== state.user.uid && state.isMaster) openMemberActions(row.dataset.member);
-  }));
+function openTableDetailsSettings(backdrop) {
+  const existing = backdrop.querySelector(".rp-details-settings-menu");
+  if (existing) {
+    existing.classList.remove("show");
+    setTimeout(() => existing.remove(), 120);
+    return;
+  }
+  const menu = document.createElement("div");
+  menu.className = "rp-details-settings-menu";
+  const free = isFreeMode();
+  menu.innerHTML = `<button type="button" id="rp-detail-toggle-mode">${svgIcon("turn")}<span>${free ? "Modo Turnos" : "Modo Livre"}</span></button><button type="button" id="rp-detail-edit-rules">${svgIcon("settings")}<span>Editar Regras</span></button><button type="button" class="danger" id="rp-detail-delete">${svgIcon("trash")}<span>Deletar Mesa</span></button>`;
+  backdrop.querySelector(".rp-table-details")?.appendChild(menu);
+  requestAnimationFrame(() => menu.classList.add("show"));
+  menu.querySelector("#rp-detail-toggle-mode")?.addEventListener("click", async () => {
+    const mode = free ? "turns" : "free";
+    try {
+      const eligible = turnEligibleMembers();
+      await updateDoc(doc(db, "tables", state.tableId), { "settings.mode": mode, mode, currentTurnUid: mode === "turns" ? (eligible[0]?.uid || null) : null });
+      await postNPC(`${memberName(state.user.uid)} alterou o modo da mesa.`, { systemEvent: "table-settings-changed", actorUid: state.user.uid, mode });
+      menu.remove();
+    } catch (e) { toast("Não foi possível alterar o modo.", "error"); }
+  });
+  menu.querySelector("#rp-detail-edit-rules")?.addEventListener("click", () => {
+    menu.remove();
+    closeTableDetails();
+    navigate(`/edit-table/${encodeURIComponent(state.tableId)}`);
+  });
+  menu.querySelector("#rp-detail-delete")?.addEventListener("click", () => { menu.remove(); confirmTableAction("Deletar mesa", "A mesa e os dados de jogo serão removidos. Esta ação não pode ser desfeita.", deleteTable); });
 }
 
 function openAddMember() {
@@ -2698,7 +2968,11 @@ function openTableSettings() {
       closeModal(); toast("Configurações salvas.", "success");
     } catch (error) { console.error(error); toast("Não foi possível salvar as configurações.", "error"); }
   });
-  modal.querySelector("#rp-edit-rules")?.addEventListener("click", () => navigate(`/edit-table/${encodeURIComponent(state.tableId)}`));
+  modal.querySelector("#rp-edit-rules")?.addEventListener("click", () => {
+    closeModal();
+    closeTableDetails();
+    navigate(`/edit-table/${encodeURIComponent(state.tableId)}`);
+  });
   modal.querySelector("#rp-leave-table")?.addEventListener("click", () => confirmTableAction("Sair da mesa", "Você deixará de participar desta mesa.", async () => { await updateDoc(doc(db, "tables", state.tableId), { members: arrayRemove(state.user.uid), [`unreadCounts.${state.user.uid}`]: 0 }); closeModal(); navigate("/home"); }));
   modal.querySelector("#rp-delete-table")?.addEventListener("click", () => confirmTableAction("Excluir mesa", "A mesa e seus dados de jogo serão removidos. Esta ação não pode ser desfeita.", deleteTable));
 }
@@ -2730,7 +3004,6 @@ async function deleteTable() {
 // ============================================================
 
 function openModal(title, content, backAction = null) {
-  closeModal();
   state.modalBack = backAction;
   const backdrop = document.createElement("div");
   backdrop.className = "rp-modal-backdrop";
@@ -2739,13 +3012,14 @@ function openModal(title, content, backAction = null) {
   document.body.appendChild(backdrop);
   requestAnimationFrame(() => backdrop.classList.add("show"));
   backdrop.querySelector("#rp-modal-close")?.addEventListener("click", closeModal);
-  backdrop.querySelector("#rp-modal-back")?.addEventListener("click", () => { const fn = state.modalBack; closeModal(); if (typeof fn === "function") fn(); });
+  backdrop.querySelector("#rp-modal-back")?.addEventListener("click", () => { closeModal(); if (typeof backAction === "function") backAction(); });
   backdrop.addEventListener("click", e => { if (e.target === backdrop) closeModal(); });
   return backdrop;
 }
 
 function closeModal() {
-  const modal = document.querySelector(".rp-modal-backdrop");
+  const modals = document.querySelectorAll(".rp-modal-backdrop");
+  const modal = modals[modals.length - 1];
   if (!modal) return;
   modal.classList.remove("show");
   setTimeout(() => modal.remove(), 180);
@@ -2774,14 +3048,16 @@ function injectStyles() {
     .rp-back svg,.rp-header-more svg{width:22px;height:22px}
     .rp-title-button{flex:1;min-width:0;border:0;background:transparent;color:var(--text-primary);text-align:left;padding:5px 8px;display:flex;flex-direction:column;cursor:pointer}.rp-title-button strong{font-size:1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.rp-title-button span{font-size:.72rem;color:var(--text-secondary);margin-top:2px}
     .rp-chat{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:0 10px 18px;min-width:0;max-width:100%;touch-action:pan-y}.rp-chat-inner{min-width:0;max-width:900px;width:100%;overflow-x:clip}.rp-turn-queue{width:calc(100% + 20px);max-width:none;box-sizing:border-box;overflow:hidden;min-width:0;flex:0 0 auto}.rp-turn-member{max-width:46px}.rp-turn-queue{flex-wrap:wrap;align-content:center}.rp-turn-queue[hidden]{display:none!important}.rp-turn-queue{position:sticky;top:0;z-index:8;min-height:58px;display:flex;align-items:center;justify-content:center;gap:7px;padding:8px 6px;margin:0 -10px 10px;background:color-mix(in srgb,var(--bg-primary) 96%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--border-color);box-shadow:0 3px 12px rgba(0,0,0,.12)}.rp-turn-member{width:36px;height:36px;flex:0 0 36px;border-radius:50%;display:grid;place-items:center;opacity:.58;transform:scale(.9);transition:.18s ease}.rp-turn-member.active{width:46px;height:46px;flex-basis:46px;opacity:1;transform:scale(1);border:2px solid var(--accent-secondary);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent-secondary) 18%,transparent)}.rp-turn-avatar{width:100%;height:100%;border-radius:50%;overflow:hidden;display:grid;place-items:center;background:var(--bg-secondary);border:1px solid var(--border-color);font-size:.58rem;font-weight:800}.rp-turn-avatar img{width:100%;height:100%;object-fit:cover}.rp-turn-arrow{color:var(--text-secondary);font-size:1.15rem;line-height:1}.rp-turn-empty{font-size:.72rem;color:var(--text-secondary)}.rp-chat-inner{max-width:900px;margin:0 auto;display:flex;flex-direction:column;gap:4px}.rp-day{text-align:center;margin:7px 0 10px}.rp-day span{display:inline-block;padding:5px 11px;border-radius:12px;background:var(--bg-secondary);color:var(--text-secondary);font-size:.7rem;box-shadow:0 1px 2px rgba(0,0,0,.12)}
-    .rp-bubble-wrap{display:flex;align-items:flex-end;gap:6px;margin:2px 0;max-width:88%}.rp-bubble-wrap.mine{align-self:flex-end;flex-direction:row-reverse}.rp-bubble-wrap.bot{align-self:center;max-width:90%;justify-content:center}.rp-bubble{position:relative;padding:8px 10px 5px;border-radius:13px;background:#3b3940;box-shadow:0 1px 2px rgba(0,0,0,.18);min-width:48px}.rp-bubble-wrap.mine .rp-bubble{border-bottom-right-radius:4px}.rp-bubble-wrap:not(.mine):not(.bot) .rp-bubble{border-bottom-left-radius:4px}.rp-bubble-wrap.role-master .rp-bubble{background:#8f3030}.rp-bubble-wrap.role-player .rp-bubble{background:#48404f}.rp-bubble-wrap.role-bot .rp-bubble{background:#315b43}.rp-sender{font-size:.7rem;font-weight:750;opacity:.82;margin-bottom:3px}.rp-bubble-wrap.mine .rp-sender{display:none}.rp-message-text{font-size:.93rem;line-height:1.42;white-space:normal;overflow-wrap:anywhere}.rp-meta{text-align:right;font-size:.61rem;opacity:.58;margin:4px 0 0 12px}.rp-avatar{width:31px;height:31px;flex:0 0 31px;border-radius:50%;overflow:hidden;display:grid;place-items:center;background:var(--bg-secondary);font-size:.63rem;font-weight:800;color:var(--text-primary);border:1px solid var(--border-color)}.rp-avatar img,.rp-member-avatar img{width:100%;height:100%;object-fit:cover}.rp-bot-avatar{background:#315b43;color:#c9ead4}.rp-caption{font-size:.8rem;margin-top:5px}.rp-photo-message{padding:0;border:0;background:transparent;display:block;max-width:300px;cursor:pointer}.rp-photo-message img{display:block;width:100%;max-height:360px;object-fit:cover;border-radius:9px}.rp-bubble-wrap.mine .rp-photo-message{max-width:300px}
+    .rp-bubble-wrap{display:flex;align-items:flex-end;gap:6px;margin:2px 0;max-width:88%}.rp-bubble-wrap.mine{align-self:flex-end;flex-direction:row-reverse}.rp-bubble-wrap.bot{align-self:center;max-width:90%;justify-content:center}.rp-bubble{position:relative;padding:8px 10px 5px;border-radius:13px;background:#3b3940;box-shadow:0 1px 2px rgba(0,0,0,.18);min-width:48px}.rp-bubble-wrap.mine .rp-bubble{border-bottom-right-radius:4px}.rp-bubble-wrap:not(.mine):not(.bot) .rp-bubble{border-bottom-left-radius:4px}.rp-bubble-wrap.role-master .rp-bubble{background:#8f3030}.rp-bubble-wrap.role-player .rp-bubble{background:#48404f}.rp-bubble-wrap.role-bot .rp-bubble{background:#315b43}.rp-sender{font-size:.7rem;font-weight:750;opacity:.82;margin-bottom:3px}.rp-bubble-wrap.mine .rp-sender{display:none}.rp-message-text{font-size:.93rem;line-height:1.42;white-space:normal;overflow-wrap:anywhere}.rp-meta{text-align:right;font-size:.61rem;opacity:.58;margin:4px 0 0 12px}.rp-avatar{width:31px;height:31px;flex:0 0 31px;border-radius:50%;overflow:hidden;display:grid;place-items:center;background:var(--bg-secondary);font-size:.63rem;font-weight:800;color:var(--text-primary);border:1px solid var(--border-color)}.rp-avatar img,.rp-member-avatar img{width:100%;height:100%;object-fit:cover}.rp-bot-avatar{background:#315b43;color:#c9ead4}.rp-caption{font-size:.8rem;margin-top:5px}.rp-photo-message{padding:0;border:0;background:transparent;display:block;width:40vw;height:40vw;max-width:40vw;max-height:40vw;cursor:pointer;overflow:hidden;border-radius:9px}.rp-photo-message img{display:block;width:100%;height:100%;max-width:100%;max-height:100%;aspect-ratio:1 / 1;object-fit:cover;border-radius:9px}.rp-bubble-wrap.mine .rp-photo-message{width:40vw;height:40vw;max-width:40vw;max-height:40vw}
     .rp-parser-menu{position:absolute;left:52px;right:52px;bottom:60px;max-width:560px;margin:auto;padding:6px;border:1px solid var(--border-color);border-radius:16px;background:var(--bg-secondary);box-shadow:0 12px 35px rgba(0,0,0,.32);z-index:25;overflow:hidden}.rp-parser-menu[hidden]{display:none}.rp-parser-option{width:100%;display:flex;align-items:center;gap:9px;padding:9px 11px;border:0;border-radius:11px;background:transparent;color:var(--text-primary);text-align:left;font:inherit;cursor:pointer}.rp-parser-option:hover{background:var(--bg-card)}.rp-parser-option span{font-weight:800;min-width:46px}.rp-parser-option small{color:var(--text-secondary)}.rp-parser-option-parser span{color:var(--accent-secondary)}.rp-parser-option-mention span{color:#8bb8ff}.rp-parser-context{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px;padding:8px 10px;margin-bottom:10px;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-secondary);font-size:.72rem;color:var(--text-secondary)}.rp-parser-context b{padding:4px 7px;border-radius:999px;background:rgba(180,150,100,.16);color:var(--accent-secondary);font-size:.7rem}.rp-parser-markers{display:flex;align-items:center;gap:5px;margin-top:5px;font-size:.62rem;color:var(--text-secondary);opacity:.85}.rp-parser-markers b{padding:2px 6px;border-radius:999px;background:rgba(180,150,100,.13);color:var(--accent-secondary)}
     .rp-composer-wrap{position:relative;padding:7px 8px calc(8px + env(safe-area-inset-bottom));background:linear-gradient(180deg,var(--bg-primary),var(--bg-secondary));border-top:1px solid var(--border-color);z-index:20}.rp-composer{max-width:900px;margin:auto;display:flex;align-items:flex-end;gap:5px}.rp-composer textarea{flex:1;min-width:0;max-height:130px;min-height:44px;padding:11px 13px;border:1px solid var(--border-color);border-radius:23px;background:var(--bg-secondary);color:var(--text-primary);font:inherit;line-height:1.35;resize:none;outline:none}.rp-composer textarea:focus{border-color:color-mix(in srgb,var(--accent-purple) 55%,var(--border-color));box-shadow:0 0 0 3px rgba(107,33,168,.1)}.rp-composer textarea::placeholder{color:var(--text-secondary);opacity:.75}.rp-attach,.rp-send{width:44px;height:44px;flex:0 0 44px;border:0;border-radius:50%;display:grid;place-items:center;cursor:pointer}.rp-attach{background:transparent;color:var(--text-secondary)}.rp-attach:hover{background:rgba(255,255,255,.05);color:var(--text-primary)}.rp-attach svg{width:22px;height:22px}.rp-send{background:var(--accent-secondary);color:var(--bg-primary);box-shadow:0 4px 13px rgba(0,0,0,.2);touch-action:none}.rp-send svg{width:22px;height:22px}.rp-send.loading{opacity:.6;transform:scale(.94)}.rp-send:disabled,.rp-attach:disabled{opacity:.35;cursor:not-allowed}.rp-composer textarea:disabled{opacity:.62;cursor:not-allowed}
     .rp-quick-dial{touch-action:none;position:absolute;right:8px;bottom:66px;display:flex;flex-direction:column-reverse;gap:9px;align-items:center;transform:translateY(18px) scale(.92);transform-origin:bottom right;opacity:0;pointer-events:none;transition:transform .22s ease,opacity .22s ease}.rp-quick-dial.open{transform:none;opacity:1;pointer-events:auto}.rp-quick-item{width:54px;min-height:58px;border:1px solid var(--border-color);border-radius:18px;background:var(--bg-secondary);color:var(--text-primary);box-shadow:0 8px 24px rgba(0,0,0,.28);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:.59rem;cursor:pointer}.rp-quick-item:hover{background:var(--bg-card)}.rp-quick-icon{width:24px;height:24px;display:grid;place-items:center}.rp-quick-icon svg{width:22px;height:22px}.rp-dice-button-icon svg{width:27px;height:27px}
     .rp-loading,.rp-error-screen{width:100%;height:100%;display:grid;place-items:center;align-content:center;gap:12px}.rp-spinner{width:27px;height:27px;border:2px solid var(--border-color);border-top-color:var(--accent-secondary);border-radius:50%;animation:rp-spin .8s linear infinite}@keyframes rp-spin{to{transform:rotate(360deg)}}.rp-error-screen{padding:24px;box-sizing:border-box}.rp-error-back{position:absolute;top:16px;left:12px;background:none;border:0;color:var(--text-primary);display:flex;align-items:center;gap:4px}.rp-error-back svg{width:20px}.rp-error-card{text-align:center;max-width:360px}.rp-error-icon{width:48px;height:48px;margin:0 auto 12px;border-radius:50%;display:grid;place-items:center;background:#8f3030;font-weight:800}.rp-error-card p{color:var(--text-secondary);line-height:1.5}
     .rp-lock-overlay{position:absolute;inset:64px 0 0;z-index:40;background:color-mix(in srgb,var(--bg-primary) 88%,transparent);backdrop-filter:blur(12px);display:grid;place-items:center;padding:24px}.rp-lock-card{max-width:390px;text-align:center;padding:26px;border:1px solid var(--border-color);border-radius:22px;background:var(--bg-secondary);box-shadow:0 20px 60px rgba(0,0,0,.3)}.rp-lock-mark{font-size:2rem;color:var(--accent-secondary);margin-bottom:8px}.rp-lock-card p{color:var(--text-secondary);line-height:1.5}.rp-primary,.rp-ghost{min-height:44px;border-radius:13px;padding:0 16px;font:inherit;font-weight:700;cursor:pointer}.rp-primary{border:0;background:var(--accent-secondary);color:var(--bg-primary)}.rp-ghost{border:1px solid var(--border-color);background:transparent;color:var(--text-primary);margin-top:8px}
-    .rp-modal-backdrop{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.58);display:flex;align-items:flex-end;justify-content:center;opacity:0;transition:opacity .18s ease}.rp-modal-backdrop.show{opacity:1}.rp-modal{width:min(720px,100%);max-height:min(88dvh,760px);background:var(--bg-primary);border:1px solid var(--border-color);border-bottom:0;border-radius:24px 24px 0 0;overflow:hidden;transform:translateY(20px);transition:transform .2s ease;box-shadow:0 -15px 60px rgba(0,0,0,.3)}.rp-modal-backdrop.show .rp-modal{transform:none}.rp-modal-head{height:58px;display:flex;align-items:center;padding:0 14px 0 18px;border-bottom:1px solid var(--border-color)}.rp-modal-head strong{flex:1}.rp-modal-head>button:first-child{margin-right:2px}.rp-modal-head button{width:38px;height:38px;border:0;border-radius:50%;background:transparent;color:var(--text-primary);display:grid;place-items:center}.rp-modal-head button svg{width:20px}.rp-modal-body{padding:15px;max-height:calc(min(88dvh,760px) - 58px);overflow:auto}.rp-details-cover{display:flex;gap:13px;align-items:center;padding:6px 4px 16px}.rp-details-map{width:54px;height:54px;border-radius:16px;background:var(--bg-secondary);display:grid;place-items:center;color:var(--accent-secondary);font-size:1.5rem}.rp-details-cover div:last-child{display:flex;flex-direction:column}.rp-details-cover span,.rp-member-main small,.rp-setting-row small,.rp-setting-choice small{color:var(--text-secondary);font-size:.74rem;margin-top:3px}.rp-details-section{border-top:1px solid var(--border-color);padding:14px 0}.rp-section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}.rp-section-head h3{margin:0;font-size:.88rem}.rp-icon-button{width:38px;height:38px;border:0;border-radius:50%;background:var(--bg-secondary);color:var(--text-primary);display:grid;place-items:center}.rp-icon-button svg{width:20px}.rp-member-row,.rp-setting-row{width:100%;display:flex;align-items:center;gap:11px;padding:10px 4px;border:0;border-radius:13px;background:transparent;color:var(--text-primary);text-align:left;cursor:pointer}.rp-member-row:hover,.rp-setting-row:hover{background:var(--bg-secondary)}.rp-member-avatar{width:43px;height:43px;flex:0 0 43px;border-radius:50%;overflow:hidden;display:grid;place-items:center;background:var(--bg-secondary);font-size:.7rem;font-weight:800}.rp-member-main{flex:1;display:flex;flex-direction:column}.rp-crown{color:var(--accent-secondary);width:22px}.rp-crown svg{width:20px;height:20px}.rp-member-chevron,.rp-setting-row>b{color:var(--text-secondary);font-size:1.35rem}.rp-setting-row>svg{width:22px;height:22px;flex:0 0 22px}.rp-setting-row span{flex:1;display:flex;flex-direction:column}.rp-empty{padding:18px;text-align:center;color:var(--text-secondary);font-size:.82rem}.rp-member-actions{display:flex;flex-direction:column;gap:5px}.rp-member-actions button{min-height:52px;border:0;border-radius:13px;background:var(--bg-secondary);color:var(--text-primary);display:flex;align-items:center;gap:12px;padding:0 14px;font:inherit;text-align:left}.rp-member-actions button svg{width:21px;height:21px}.rp-member-actions .danger{color:#e88a8a}.rp-settings-form{display:flex;flex-direction:column;gap:8px}.rp-setting-choice{display:flex;gap:12px;padding:13px;border:1px solid var(--border-color);border-radius:15px;cursor:pointer}.rp-setting-choice input{accent-color:var(--accent-secondary);margin-top:4px}.rp-setting-choice span{display:flex;flex-direction:column}.rp-dice-modal{text-align:center}.rp-dice-roll-grid{grid-template-columns:repeat(4,1fr);margin-bottom:12px}.rp-die-option{min-height:96px;border:1px solid var(--border-color);border-radius:15px;background:var(--bg-secondary);color:var(--text-primary);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer}.rp-die-option:hover{border-color:var(--accent-secondary);transform:translateY(-1px)}.rp-die-visual{height:58px;display:grid;place-items:center}.rp-die-visual>svg{width:54px;height:54px}.rp-d100-double{display:flex;gap:2px;align-items:center}.rp-d100-double svg{width:30px;height:30px}.rp-roll-declaration-box{margin:12px 0;padding:10px;border:1px solid var(--border-color);border-radius:15px;background:var(--bg-secondary);text-align:left}.rp-roll-declaration-title{font-size:.72rem;color:var(--text-secondary);margin-bottom:7px}.rp-roll-empty{font-size:.75rem;color:var(--text-secondary)}.rp-roll-pill{border:0;border-radius:999px;padding:7px 10px;margin:3px;font:inherit;font-size:.72rem;color:#fff;cursor:pointer}.rp-pill-dice{background:#7c5a9b}.rp-pill-attribute{background:#7a1f2b}.rp-pill-equipment{background:#9b6b3d}.rp-pill-ability{background:#9b4f83}.rp-pill-skill{background:#397d72}.rp-declaration-disabled{filter:brightness(.42) saturate(.55);opacity:.62;cursor:not-allowed!important;pointer-events:none}.rp-declaration-disabled:hover{transform:none;border-color:var(--border-color)}.rp-declaration-restriction{color:#d18b8b!important;font-weight:700}.rp-declaration-bonus{display:block;margin-top:6px;color:var(--accent-secondary);font-size:.7rem}.rp-roll-declaration-actions{display:flex;flex-direction:column;gap:7px;margin:10px 0}.rp-declare{width:100%;display:block;min-height:42px;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-secondary);font:inherit;font-size:.75rem;color:var(--text-primary);cursor:pointer}.rp-declare.equipment{border-color:#9b6b3d}.rp-declare.ability{border-color:#9b4f83}.rp-declare.skill{border-color:#397d72}.rp-roll-submit{width:100%;margin-top:5px}.rp-declaration-picker{display:flex;flex-direction:column;gap:6px}.rp-declaration-option{border:1px solid var(--border-color);border-radius:13px;background:var(--bg-secondary);color:var(--text-primary);padding:11px;text-align:left;display:flex;flex-direction:column;cursor:pointer}.rp-declaration-option small{color:var(--text-secondary);margin-top:3px}.rp-roll-details{margin-top:7px;padding:7px 9px;border-radius:9px;background:rgba(0,0,0,.13);font-size:.69rem;display:flex;flex-direction:column;gap:3px}.rp-roll-details strong{opacity:.75}.rp-roll-details span,.rp-roll-details small{opacity:.8}.rp-dice-large{height:100px;display:grid;place-items:center;color:var(--accent-secondary)}.rp-dice-large svg{width:90px;height:90px}.rp-dice-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.rp-dice-grid button{min-height:48px;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-secondary);color:var(--text-primary);font-weight:750}.rp-confirm-modal p{text-align:center;color:var(--text-secondary);margin:4px 0 16px}.rp-photo-viewer{display:grid;place-items:center;min-height:40vh}.rp-photo-viewer img{max-width:100%;max-height:65vh;border-radius:12px;object-fit:contain}.photo-modal{max-height:95dvh}.rp-loading-inline{text-align:center;color:var(--text-secondary);padding:20px}.rp-toast{position:fixed;left:50%;bottom:90px;z-index:200;transform:translate(-50%,15px);opacity:0;transition:.2s ease;padding:10px 14px;border-radius:12px;background:var(--bg-secondary);border:1px solid var(--border-color);color:var(--text-primary);box-shadow:0 8px 28px rgba(0,0,0,.25);font-size:.8rem}.rp-toast.show{transform:translate(-50%,0);opacity:1}.rp-toast-success{border-color:color-mix(in srgb,var(--accent-secondary) 45%,var(--border-color))}.rp-toast-error{border-color:#8f3030}
+    .rp-modal-backdrop{position:fixed;inset:0;z-index:400;background:rgba(0,0,0,.58);display:flex;align-items:flex-end;justify-content:center;opacity:0;transition:opacity .18s ease}.rp-modal-backdrop.show{opacity:1}.rp-modal{width:min(720px,100%);max-height:min(88dvh,760px);background:var(--bg-primary);border:1px solid var(--border-color);border-bottom:0;border-radius:24px 24px 0 0;overflow:hidden;transform:translateY(20px);transition:transform .2s ease;box-shadow:0 -15px 60px rgba(0,0,0,.3)}.rp-modal-backdrop.show .rp-modal{transform:none}.rp-modal-head{height:58px;display:flex;align-items:center;padding:0 14px 0 18px;border-bottom:1px solid var(--border-color)}.rp-modal-head strong{flex:1}.rp-modal-head>button:first-child{margin-right:2px}.rp-modal-head button{width:38px;height:38px;border:0;border-radius:50%;background:transparent;color:var(--text-primary);display:grid;place-items:center}.rp-modal-head button svg{width:20px}.rp-modal-body{padding:15px;max-height:calc(min(88dvh,760px) - 58px);overflow:auto}.rp-details-cover{display:flex;gap:13px;align-items:center;padding:6px 4px 16px}.rp-details-map{width:54px;height:54px;border-radius:16px;background:var(--bg-secondary);display:grid;place-items:center;color:var(--accent-secondary);font-size:1.5rem}.rp-details-cover div:last-child{display:flex;flex-direction:column}.rp-details-cover span,.rp-member-main small,.rp-setting-row small,.rp-setting-choice small{color:var(--text-secondary);font-size:.74rem;margin-top:3px}.rp-details-section{border-top:1px solid var(--border-color);padding:14px 0}.rp-section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}.rp-section-head h3{margin:0;font-size:.88rem}.rp-icon-button{width:38px;height:38px;border:0;border-radius:50%;background:var(--bg-secondary);color:var(--text-primary);display:grid;place-items:center}.rp-icon-button svg{width:20px}.rp-member-row,.rp-setting-row{width:100%;display:flex;align-items:center;gap:11px;padding:10px 4px;border:0;border-radius:13px;background:transparent;color:var(--text-primary);text-align:left;cursor:pointer}.rp-member-row:hover,.rp-setting-row:hover{background:var(--bg-secondary)}.rp-member-avatar{width:43px;height:43px;flex:0 0 43px;border-radius:50%;overflow:hidden;display:grid;place-items:center;background:var(--bg-secondary);font-size:.7rem;font-weight:800}.rp-member-main{flex:1;display:flex;flex-direction:column}.rp-crown{color:var(--accent-secondary);width:22px}.rp-crown svg{width:20px;height:20px}.rp-member-chevron,.rp-setting-row>b{color:var(--text-secondary);font-size:1.35rem}.rp-setting-row>svg{width:22px;height:22px;flex:0 0 22px}.rp-setting-row span{flex:1;display:flex;flex-direction:column}.rp-empty{padding:18px;text-align:center;color:var(--text-secondary);font-size:.82rem}.rp-member-actions{display:flex;flex-direction:column;gap:5px}.rp-member-actions button{min-height:52px;border:0;border-radius:13px;background:var(--bg-secondary);color:var(--text-primary);display:flex;align-items:center;gap:12px;padding:0 14px;font:inherit;text-align:left}.rp-member-actions button svg{width:21px;height:21px}.rp-member-actions .danger{color:#e88a8a}.rp-settings-form{display:flex;flex-direction:column;gap:8px}.rp-setting-choice{display:flex;gap:12px;padding:13px;border:1px solid var(--border-color);border-radius:15px;cursor:pointer}.rp-setting-choice input{accent-color:var(--accent-secondary);margin-top:4px}.rp-setting-choice span{display:flex;flex-direction:column}.rp-dice-modal{text-align:center}.rp-dice-roll-grid{grid-template-columns:repeat(4,1fr);margin-bottom:12px}.rp-die-option{min-height:96px;border:1px solid var(--border-color);border-radius:15px;background:var(--bg-secondary);color:var(--text-primary);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer}.rp-die-option:hover{border-color:var(--accent-secondary);transform:translateY(-1px)}.rp-die-visual{height:58px;display:grid;place-items:center}.rp-die-visual>svg{width:54px;height:54px}.rp-d100-double{display:flex;gap:2px;align-items:center}.rp-d100-double svg{width:30px;height:30px}.rp-roll-declaration-box{margin:12px 0;padding:10px;border:1px solid var(--border-color);border-radius:15px;background:var(--bg-secondary);text-align:left}.rp-roll-declaration-title{font-size:.72rem;color:var(--text-secondary);margin-bottom:7px}.rp-roll-empty{font-size:.75rem;color:var(--text-secondary)}.rp-roll-pill{border:0;border-radius:999px;padding:7px 10px;margin:3px;font:inherit;font-size:.72rem;color:#fff;cursor:pointer}.rp-pill-dice{background:#7c5a9b}.rp-pill-attribute{background:#7a1f2b}.rp-pill-equipment{background:#9b6b3d}.rp-pill-ability{background:#9b4f83}.rp-pill-skill{background:#397d72}.rp-declaration-disabled{filter:brightness(.42) saturate(.55);opacity:.62;cursor:not-allowed!important;pointer-events:none}.rp-declaration-disabled:hover{transform:none;border-color:var(--border-color)}.rp-declaration-restriction{color:#d18b8b!important;font-weight:700}.rp-declaration-bonus{display:block;margin-top:6px;color:var(--accent-secondary);font-size:.7rem}.rp-roll-declaration-actions{display:flex;flex-direction:column;gap:7px;margin:10px 0}.rp-declare{width:100%;display:block;min-height:42px;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-secondary);font:inherit;font-size:.75rem;color:var(--text-primary);cursor:pointer}.rp-declare.equipment{border-color:#9b6b3d}.rp-declare.ability{border-color:#9b4f83}.rp-declare.skill{border-color:#397d72}.rp-roll-submit{width:100%;margin-top:5px}.rp-declaration-picker{display:flex;flex-direction:column;gap:6px}.rp-declaration-option{border:1px solid var(--border-color);border-radius:13px;background:var(--bg-secondary);color:var(--text-primary);padding:11px;text-align:left;display:flex;flex-direction:column;cursor:pointer}.rp-declaration-option small{color:var(--text-secondary);margin-top:3px}.rp-roll-details{margin-top:7px;padding:7px 9px;border-radius:9px;background:rgba(0,0,0,.13);font-size:.69rem;display:flex;flex-direction:column;gap:3px}.rp-roll-details strong{opacity:.75}.rp-roll-details span,.rp-roll-details small{opacity:.8}.rp-dice-large{height:100px;display:grid;place-items:center;color:var(--accent-secondary)}.rp-dice-large svg{width:90px;height:90px}.rp-dice-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.rp-dice-grid button{min-height:48px;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-secondary);color:var(--text-primary);font-weight:750}.rp-confirm-modal p{text-align:center;color:var(--text-secondary);margin:4px 0 16px}.rp-photo-viewer{display:grid;place-items:center;min-height:40vh}.rp-photo-viewer img{max-width:100%;max-height:65vh;border-radius:12px;object-fit:contain}.photo-modal{max-height:95dvh}.rp-loading-inline{text-align:center;color:var(--text-secondary);padding:20px}.rp-toast{position:fixed;left:50%;bottom:90px;z-index:200;transform:translate(-50%,15px);opacity:0;transition:.2s ease;padding:10px 14px;border-radius:12px;background:var(--bg-secondary);border:1px solid var(--border-color);color:var(--text-primary);box-shadow:0 8px 28px rgba(0,0,0,.25);font-size:.8rem}.rp-toast.show{transform:translate(-50%,0);opacity:1}.rp-toast-success{border-color:color-mix(in srgb,var(--accent-secondary) 45%,var(--border-color))}.rp-toast-error{border-color:#8f3030}
     .rp-typing-wrap{display:flex;align-items:center;gap:7px;margin:4px 0 8px 3px}.rp-typing-avatar{width:28px;height:28px;flex:0 0 28px}.rp-typing-bubble{display:flex;align-items:center;gap:3px;padding:8px 11px;border-radius:14px 14px 14px 4px;background:#48404f;color:#d8d2df;box-shadow:0 1px 2px rgba(0,0,0,.18);font-size:.68rem}.rp-typing-bubble i{width:4px;height:4px;border-radius:50%;background:#b9b0c4;animation:rp-typing 1.1s infinite ease-in-out}.rp-typing-bubble i:nth-child(3){animation-delay:.15s}.rp-typing-bubble i:nth-child(4){animation-delay:.3s}@keyframes rp-typing{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-3px);opacity:1}}.rp-message-hit{display:contents}.rp-message-actions{display:flex;flex-direction:column;gap:6px}.rp-message-actions button{min-height:52px;border:0;border-radius:13px;background:var(--bg-secondary);color:var(--text-primary);display:flex;align-items:center;gap:12px;padding:0 15px;font:inherit;text-align:left}.rp-message-actions .danger,.rp-wa-danger-btn{color:#e88a8a}.rp-edit-message-input{width:100%;min-height:130px;box-sizing:border-box;padding:12px;border:1px solid var(--border-color);border-radius:13px;background:var(--bg-secondary);color:var(--text-primary);font:inherit;resize:vertical;margin-bottom:10px}.rp-wa-settings{display:flex;flex-direction:column;gap:10px}.rp-wa-profile{display:flex;align-items:center;gap:13px;padding:14px;background:var(--bg-secondary);border-radius:16px}.rp-wa-profile>div:last-child{display:flex;flex-direction:column}.rp-wa-profile small{color:var(--text-secondary);margin-top:3px}.rp-wa-group{display:flex;flex-direction:column;gap:4px;padding:6px 0;border-top:1px solid var(--border-color)}.rp-wa-group h4{margin:6px 4px;color:var(--text-secondary);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em}.rp-wa-danger{margin-top:4px}.rp-wa-danger-btn{min-height:50px;border:0;background:transparent;text-align:left;padding:0 8px;font:inherit;font-weight:750;cursor:pointer;display:flex;align-items:center;gap:11px}.rp-wa-danger-btn svg{width:22px;height:22px;flex:0 0 22px}.rp-details-map svg{width:28px;height:28px}.rp-setting-row>svg{flex:0 0 22px}.rp-wa-settings .rp-primary{margin-top:5px}.rp-setting-choice{background:transparent}.rp-setting-choice:hover{background:var(--bg-secondary)}
+
+    .rp-table-details-backdrop{position:fixed;inset:0;z-index:300;background:var(--bg-primary);transform:translateY(100%);transition:transform .24s cubic-bezier(.22,.8,.25,1);overflow:hidden}.rp-table-details-backdrop.show{transform:none}.rp-table-details{height:100dvh;display:flex;flex-direction:column;background:var(--bg-primary);color:var(--text-primary)}.rp-details-top{height:58px;min-height:58px;display:grid;grid-template-columns:44px 1fr 44px;align-items:center;padding:0 8px;border-bottom:1px solid var(--border-color);background:var(--bg-primary);position:sticky;top:0;z-index:2}.rp-details-top>button{width:42px;height:42px;border:0;background:transparent;color:var(--text-primary);display:grid;place-items:center;border-radius:50%}.rp-details-top svg{width:21px;height:21px}.rp-details-top strong{text-align:center;font-size:.96rem}.rp-details-scroll{overflow:auto;padding:22px 18px 32px;max-width:760px;width:100%;margin:0 auto}.rp-details-avatar{width:92px;height:92px;margin:6px auto 14px;border-radius:50%;display:grid;place-items:center;background:var(--bg-secondary);color:var(--accent-secondary);border:1px solid var(--border-color)}.rp-details-avatar svg{width:48px;height:48px}.rp-details-scroll h1{text-align:center;font-size:1.35rem;margin:0}.rp-details-members-count{text-align:center;color:var(--text-secondary);font-size:.8rem;margin:5px 0 18px}.rp-details-description{padding:15px;border:1px solid var(--border-color);border-radius:16px;background:var(--bg-secondary);font-size:.83rem;line-height:1.5;margin-bottom:12px}.rp-add-member-wide{width:100%;display:flex;justify-content:center;gap:8px;align-items:center}.rp-add-member-wide svg{width:19px}.rp-details-settings-menu{position:absolute;right:10px;top:55px;width:min(250px,calc(100vw - 20px));padding:6px;border:1px solid var(--border-color);border-radius:15px;background:var(--bg-secondary);box-shadow:0 14px 40px rgba(0,0,0,.3);transform:translateY(-6px) scale(.97);opacity:0;transition:.15s ease;z-index:5}.rp-details-settings-menu.show{transform:none;opacity:1}.rp-details-settings-menu button{width:100%;min-height:46px;border:0;border-radius:10px;background:transparent;color:var(--text-primary);display:flex;align-items:center;gap:10px;padding:0 11px;font:inherit;text-align:left}.rp-details-settings-menu button:hover{background:var(--bg-primary)}.rp-details-settings-menu button svg{width:19px}.rp-details-settings-menu .danger{color:#d66b6b}.rp-leave-table{width:100%;min-height:48px;margin-top:18px;border:1px solid rgba(190,70,70,.45);border-radius:14px;background:transparent;color:#d66b6b;display:flex;align-items:center;justify-content:center;gap:8px;font:inherit;font-weight:700}.rp-leave-table svg{width:20px}
     @media(min-width:700px){.rp-screen{max-width:900px;margin:0 auto;border-left:1px solid var(--border-color);border-right:1px solid var(--border-color)}.rp-composer-wrap{padding-left:14px;padding-right:14px}.rp-modal-backdrop{align-items:center}.rp-modal{border-bottom:1px solid var(--border-color);border-radius:22px;transform:translateY(12px)}.rp-modal-body{max-height:calc(88dvh - 58px)}}
     @media(max-width:430px){.rp-bubble-wrap{max-width:91%}.rp-photo-message{max-width:250px}.rp-header{height:60px;flex-basis:60px}.rp-lock-overlay{inset:60px 0 0}.rp-quick-item{width:52px}.rp-composer textarea{font-size:.92rem}.rp-chat{padding-left:7px;padding-right:7px}}
   `;

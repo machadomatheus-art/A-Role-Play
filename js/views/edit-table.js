@@ -1099,7 +1099,7 @@ function createSection({
     document.createElement("section");
 
   section.className =
-    "builder-section";
+    "builder-section collapsed";
 
   section.id =
     id;
@@ -1499,242 +1499,6 @@ function buildAttributes(container) {
           )
         );
 
-
-        // ----------------------------------------------------
-        // TIPO
-        // ----------------------------------------------------
-
-        const type =
-          customSelect(
-            [
-              {
-                value: "",
-                label: "Selecione o tipo"
-              },
-              {
-                value: "number",
-                label: "Número"
-              },
-              {
-                value: "text",
-                label: "Texto"
-              },
-              {
-                value: "boolean",
-                label: "Sim / Não"
-              },
-              {
-                value: "percentage",
-                label: "Porcentagem"
-              },
-              {
-                value: "bar",
-                label: "Barra"
-              }
-            ],
-            attribute.type
-          );
-
-        type.addEventListener(
-          "change",
-          () => {
-            attribute.type =
-              type.value;
-
-            // Atualiza somente os campos dependentes do tipo.
-            // O card permanece aberto e não é reconstruído.
-            renderAttributeValueFields();
-          }
-        );
-
-        card.body.appendChild(
-          field(
-            "Tipo",
-            type,
-            {
-              title: "Tipo do atributo",
-              text: `
-                <p>
-                  Define como o valor será armazenado e exibido.
-                </p>
-
-                <p>
-                  Para atributos utilizados em cálculos,
-                  <strong>Número</strong> normalmente é o mais indicado.
-                </p>
-              `
-            }
-          )
-        );
-
-
-        // ----------------------------------------------------
-        // VALORES DO ATRIBUTO
-        // ----------------------------------------------------
-
-        const valueFields =
-          document.createElement("div");
-
-        valueFields.className =
-          "attribute-value-fields";
-
-        function renderAttributeValueFields() {
-          valueFields.innerHTML = "";
-
-          const typeValue = attribute.type;
-          const numeric = ["number", "percentage", "bar"].includes(typeValue);
-
-          if (!numeric) {
-            const note = document.createElement("div");
-            note.className = "builder-inline-note";
-            note.innerHTML = `
-              <strong>Valor definido na ficha</strong>
-              <span>O valor inicial deste atributo será definido quando o personagem for criado na character-sheet.</span>
-            `;
-            valueFields.appendChild(note);
-            return;
-          }
-
-          const min = numberInput(attribute.min ?? "", typeValue === "percentage" ? "0%" : "Opcional");
-          min.step = typeValue === "number" ? "1" : "any";
-          min.addEventListener("input", () => {
-            attribute.min = min.value;
-          });
-          valueFields.appendChild(
-            field(
-              typeValue === "percentage" ? "Valor mínimo (%)" : "Valor mínimo",
-              min,
-              { title: "Limite mínimo do atributo", text: `<p>Define o menor valor permitido para este atributo.</p><p><strong>Exemplo:</strong> <code>0</code> impede que o atributo fique abaixo de zero.</p><p>Deixe vazio se a mesa não quiser impor limite mínimo.</p>` }
-            )
-          );
-
-          const max = numberInput(attribute.max ?? "", typeValue === "percentage" ? "100%" : "Opcional");
-          max.step = typeValue === "number" ? "1" : "any";
-          max.addEventListener("input", () => {
-            attribute.max = max.value;
-          });
-          valueFields.appendChild(
-            field(
-              typeValue === "percentage" ? "Valor máximo (%)" : "Valor máximo",
-              max,
-              { title: "Limite máximo do atributo", text: `<p>Define o maior valor permitido para este atributo.</p><p><strong>Exemplo:</strong> <code>10</code> limita o atributo a 10.</p><p>Em porcentagens, normalmente use <code>100</code> como teto.</p>` }
-            )
-          );
-        }
-
-        card.body.appendChild(valueFields);
-        renderAttributeValueFields();
-
-        // ----------------------------------------------------
-        // AVANÇADO
-        // ----------------------------------------------------
-
-        const advanced =
-          document.createElement(
-            "details"
-          );
-
-        advanced.className =
-          "advanced-options";
-
-        advanced.innerHTML = `
-          <summary>
-            <span>
-              Configurações avançadas
-            </span>
-
-            ${arrowSVG("down")}
-          </summary>
-
-          <div class="advanced-content">
-
-            <label class="checkbox-field">
-              <input
-                type="checkbox"
-                ${attribute.allowModifiers ? "checked" : ""}
-              >
-
-              <span>
-                Permitir modificadores
-              </span>
-            </label>
-
-            <label class="checkbox-field">
-              <input
-                type="checkbox"
-                ${attribute.useInFormulas ? "checked" : ""}
-              >
-
-              <span>
-                Pode ser utilizado em fórmulas
-              </span>
-            </label>
-
-            <label class="checkbox-field">
-              <input
-                type="checkbox"
-                ${attribute.visibleToPlayers !== false ? "checked" : ""}
-              >
-
-              <span>
-                Visível para os jogadores
-              </span>
-            </label>
-
-            <label class="checkbox-field">
-              <input
-                type="checkbox"
-                ${attribute.editableByPlayer ? "checked" : ""}
-              >
-
-              <span>
-                Jogador pode alterar
-              </span>
-            </label>
-
-          </div>
-        `;
-
-        const checkboxes =
-          advanced.querySelectorAll(
-            "input[type='checkbox']"
-          );
-
-        checkboxes[0]?.addEventListener(
-          "change",
-          event => {
-            attribute.allowModifiers =
-              event.target.checked;
-          }
-        );
-
-        checkboxes[1]?.addEventListener(
-          "change",
-          event => {
-            attribute.useInFormulas =
-              event.target.checked;
-          }
-        );
-
-        checkboxes[2]?.addEventListener(
-          "change",
-          event => {
-            attribute.visibleToPlayers =
-              event.target.checked;
-          }
-        );
-
-        checkboxes[3]?.addEventListener(
-          "change",
-          event => {
-            attribute.editableByPlayer =
-              event.target.checked;
-          }
-        );
-
-        card.body.appendChild(
-          advanced
-        );
 
         list.appendChild(
           card.card
@@ -2982,37 +2746,68 @@ function buildCustomFields(container) {
             return;
           }
 
-          const options =
-            textInput(
-              (item.options || []).join("; "),
-              "Ex.: pequena; média; grande"
-            );
+          const optionRow = document.createElement("div");
+          optionRow.className = "option-builder-row";
 
-          options.addEventListener(
-            "input",
-            () => {
+          const optionInput = textInput("", "Nova opção...");
+          const addOption = document.createElement("button");
+          addOption.type = "button";
+          addOption.className = "builder-mini-add";
+          addOption.textContent = "+";
+          addOption.setAttribute("aria-label", "Adicionar opção");
+          addOption.title = "Adicionar opção";
 
-              item.options =
-                options.value
-                  .split(";")
-                  .map(
-                    value =>
-                      value.trim()
-                  )
-                  .filter(Boolean);
+          const optionList = document.createElement("div");
+          optionList.className = "option-chips";
+
+          const addOptionValue = () => {
+            const value = optionInput.value.trim();
+            if (!value) return;
+            if (!Array.isArray(item.options)) item.options = [];
+            if (item.options.some(option => String(option).trim().toLowerCase() === value.toLowerCase())) {
+              optionInput.value = "";
+              return;
             }
-          );
+            item.options.push(value);
+            optionInput.value = "";
+            renderCustomFieldOptions();
+            optionInput.focus();
+          };
 
-          optionsContainer.appendChild(
-            field(
-              "Opções",
-              options,
-              {
-                title: "Opções disponíveis",
-                text: `<p>Digite as opções disponíveis separadas por ponto e vírgula (<code>;</code>).</p><p><strong>Exemplo:</strong> <code>pequena; média; grande</code></p><p>Cada item separado por <code>;</code> aparecerá como uma escolha independente para o jogador.</p>`
-              }
-            )
-          );
+          addOption.addEventListener("click", event => {
+            event.preventDefault();
+            event.stopPropagation();
+            addOptionValue();
+          });
+
+          optionInput.addEventListener("keydown", event => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              addOptionValue();
+            }
+          });
+
+          optionRow.appendChild(optionInput);
+          optionRow.appendChild(addOption);
+          optionsContainer.appendChild(field("Opções", optionRow));
+          optionsContainer.appendChild(optionList);
+
+          (item.options || []).forEach((option, index) => {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "option-chip";
+            chip.innerHTML = `<span>${escapeHTML(option)}</span><b aria-hidden="true">×</b>`;
+            chip.title = "Remover opção";
+            chip.addEventListener("click", event => {
+              event.preventDefault();
+              event.stopPropagation();
+              item.options.splice(index, 1);
+              renderCustomFieldOptions();
+            });
+            optionList.appendChild(chip);
+          });
+
+
         }
 
         card.body.appendChild(
@@ -3093,9 +2888,6 @@ function buildDice(container) {
             durante o RPG.
           </p>
 
-          <p>
-            O D100 é formado por dois dados D10.
-          </p>
         `
       }
     });
@@ -3278,9 +3070,6 @@ function buildDice(container) {
       para as rolagens desta mesa.
     </p>
 
-    <p>
-      O D100 utiliza dois dados D10.
-    </p>
   `;
 
   section.content.appendChild(
@@ -3858,6 +3647,46 @@ function buildSummary(container) {
 // ============================================================
 
 function injectStyles() {
+  // Refatoração visual mobile-first: menos formulário, mais ficha de RPG.
+  const compactStyle = document.createElement("style");
+  compactStyle.dataset.rpgCompactBuilder = "true";
+  compactStyle.textContent = `
+    .create-table-view, .edit-table-view { padding: 10px !important; }
+    .create-table-inner, .edit-table-inner { max-width: 720px; margin: 0 auto; }
+    .create-table-title, .edit-table-title { margin: 2px 0 12px !important; }
+    .builder-section { margin: 0 0 10px !important; border-radius: 14px !important; overflow: hidden !important; }
+    .builder-section.collapsed { overflow: hidden !important; border-radius: 14px !important; }
+    .builder-section.collapsed .builder-section-header { border-radius: 14px !important; }
+    .builder-section.collapsed .builder-section-content { display: none !important; }
+    .builder-section-header { min-height: 48px !important; padding: 9px 12px !important; }
+    .builder-section-content { padding: 8px !important; }
+    .builder-section-title-area h2 { font-size: 1rem !important; }
+    .builder-section-title-area p { display:none !important; }
+    .builder-card { margin: 7px 0 !important; border-radius: 12px !important; }
+    .builder-card-header { min-height: 44px !important; padding: 8px 10px !important; }
+    .builder-card-body { padding: 9px !important; }
+    .field { margin-bottom: 8px !important; }
+    .field-label { margin-bottom: 4px !important; }
+    .attribute-compact-values { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .attribute-compact-values .field { margin:0 !important; }
+    .option-builder-row { display:flex; gap:6px; align-items:stretch; }
+    .option-builder-row > *:first-child { flex:1; }
+    .builder-mini-add { width:44px; border:0; border-radius:10px; font-size:1.35rem; font-weight:700; }
+    .option-chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
+    .option-chip { border:0; border-radius:999px; padding:6px 9px; display:inline-flex; gap:7px; align-items:center; }
+    .option-chip b { font-size:1rem; }
+    .dice-builder-grid { display:grid !important; grid-template-columns:repeat(3,1fr) !important; gap:7px !important; }
+    .dice-builder-grid > :nth-child(7) { grid-column:1 !important; }
+    .dice-builder-grid > :nth-child(8) { grid-column:3 !important; }
+    .dice-builder-option { min-height:86px !important; padding:7px !important; }
+    .dice-visual { height:54px !important; }
+    .dice-label { font-size:.82rem !important; }
+    .friends-builder-list { gap:6px !important; }
+    .builder-summary { margin-top:10px !important; }
+    @media (max-width:380px) { .attribute-compact-values { grid-template-columns:1fr; } }
+  `;
+  document.head.appendChild(compactStyle);
+
 
   if (
     document.getElementById(
