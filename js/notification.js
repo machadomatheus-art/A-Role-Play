@@ -43,21 +43,55 @@ export async function enableARolePlayPushNotifications() {
   if (!user) throw new Error("Nenhum usuário do A Role Play está conectado.");
 
   // Usa o ÚNICO service worker do PWA.
-  const appBase = new URL("./A-Role-Play/", window.location.href);
-  const swUrl = new URL("sw.js", appBase).href;
-  const appScope = appBase.href;
+  const swUrl = new URL("../sw.js", import.meta.url).href;
+  const appScope = new URL("../", import.meta.url).href;
 
   console.log("[A Role Play] Registrando Service Worker:", { swUrl, appScope });
 
-  const registration = await navigator.serviceWorker.register(swUrl, {
-    scope: appScope,
-    updateViaCache: "none"
+  let registration;
+  try {
+    registration = await navigator.serviceWorker.register(swUrl, {
+      scope: appScope,
+      updateViaCache: "none"
+    });
+  } catch (error) {
+    console.error("[A Role Play] Falha ao registrar Service Worker:", error);
+    throw new Error(`Não foi possível registrar o Service Worker: ${error?.message || error}`);
+  }
+
+  // Aguarda ESTE registro ficar ativo. Não depende do navigator.serviceWorker.ready,
+  // que pode apontar para outro registro/escopo em uma SPA hospedada em subpasta.
+  if (!registration.active) {
+    await new Promise((resolve, reject) => {
+      const worker = registration.installing || registration.waiting;
+      if (!worker) {
+        reject(new Error("O Service Worker foi registrado, mas não iniciou a instalação."));
+        return;
+      }
+      const timeout = setTimeout(() => {
+        reject(new Error(`O Service Worker não ficou ativo a tempo (estado: ${worker.state}).`));
+      }, 20000);
+      worker.addEventListener("statechange", () => {
+        if (worker.state === "activated") {
+          clearTimeout(timeout);
+          resolve();
+        } else if (worker.state === "redundant") {
+          clearTimeout(timeout);
+          reject(new Error("O Service Worker tornou-se inválido durante a instalação."));
+        }
+      });
+    });
+  }
+
+  console.log("[A Role Play] Service Worker ativo:", {
+    scriptURL: registration.active?.scriptURL,
+    scope: registration.scope,
+    state: registration.active?.state
   });
 
-  // Aguarda um SW ativo antes de entregá-lo ao FCM.
-  await navigator.serviceWorker.ready;
-
+  console.log("[A Role Play] Permissão atual das notificações:", Notification.permission);
   const permission = await Notification.requestPermission();
+  console.log("[A Role Play] Resultado da permissão:", permission);
 
   if (permission !== "granted") {
     console.warn("[A Role Play] Permissão para notificações não concedida.");
@@ -68,6 +102,7 @@ export async function enableARolePlayPushNotifications() {
   const app = getApp();
   const messaging = getMessaging(app);
 
+  console.log("[A Role Play] Solicitando token FCM...");
   const token = await getToken(messaging, {
     vapidKey: VAPID_KEY,
     serviceWorkerRegistration: registration
@@ -77,8 +112,10 @@ export async function enableARolePlayPushNotifications() {
     throw new Error("O Firebase não retornou um token FCM.");
   }
 
-  console.log("[A Role Play] FCM token:", token);
-  await registerPushToken(user, token);
+  console.log("[A Role Play] FCM token obtido:", token);
+  console.log("[A Role Play] Registrando token no Supabase...");
+  const registered = await registerPushToken(user, token);
+  console.log("[A Role Play] Token registrado no Supabase:", registered);
   return token;
 }
 
