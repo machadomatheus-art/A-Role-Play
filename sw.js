@@ -17,7 +17,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
-const CACHE_VERSION = "a-role-play-v3";
+const CACHE_VERSION = "a-role-play-v4";
 const APP_SHELL = ["/", "/index.html"];
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const OFFLINE_URL = "/";
