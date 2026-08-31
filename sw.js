@@ -17,7 +17,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
-const CACHE_VERSION = "a-role-play-v4";
+const CACHE_VERSION = "a-role-play-v1";
 const APP_SHELL = ["/", "/index.html"];
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const OFFLINE_URL = "/";
@@ -51,8 +51,6 @@ self.addEventListener("message", (event) => {
 // Firebase background messages.
 // Data-only messages are shown here manually so we control the A Role Play icon.
 messaging.onBackgroundMessage((payload) => {
-  console.log("[A Role Play] 🔔 FCM RECEBIDO PELO SERVICE WORKER:", payload);
-
   const notification = payload?.notification || {};
   const data = payload?.data || {};
 
@@ -65,16 +63,12 @@ messaging.onBackgroundMessage((payload) => {
 
   self.registration.showNotification(title, {
     body,
-    icon: "/assets/icons/icon-192.png",
-    badge: "/assets/icons/icon-192.png",
-    tag: data.tableId ? `a-role-play-table-${data.tableId}` : "a-role-play-message",
-    renotify: true,
+    icon: path("assets/icons/icon-192.png"),
+    badge: path("assets/icons/icon-192.png"),
     data: {
-      link: data.link || "/",
+      link: data.link || APP_BASE,
       tableId: data.tableId || ""
     }
-  }).catch(error => {
-    console.error("[A Role Play] ❌ Falha ao exibir notificação:", error);
   });
 });
 
@@ -133,7 +127,7 @@ self.addEventListener("fetch", (event) => {
         .catch(async () => {
           const cached =
             (await caches.match(request)) ||
-            (await caches.match("/index.html")) ||
+            (await caches.match(path("index.html"))) ||
             (await caches.match(OFFLINE_URL));
 
           return cached || new Response(
