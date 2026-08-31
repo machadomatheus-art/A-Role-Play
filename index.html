@@ -4,35 +4,53 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#efebe4">
-  
+
   <title>A Role Play</title>
-  
+
   <link rel="stylesheet" href="css/style.css">
-  
-  <!-- PWA: Manifest -->
+
   <link rel="manifest" href="manifest.json">
-  
-  <!-- PWA: Suporte a ícones no iOS -->
+
   <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
 </head>
+
 <body>
   <main id="app"></main>
-  
-  <!-- Seu Router Original -->
+
+  <!-- Router -->
   <script type="module" src="js/router.js"></script>
 
-  <!-- PWA: Registro do Service Worker -->
+  <!-- Notificações FCM -->
+  <script type="module" src="js/notification.js"></script>
+
+  <!-- PWA / Service Worker -->
   <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        const swUrl = new URL("sw.js", window.location.href);
+        const scopeUrl = new URL("./", window.location.href);
+
+        console.log("[A Role Play] Registrando Service Worker:", {
+          swUrl: swUrl.href,
+          scope: scopeUrl.href
+        });
+
+        navigator.serviceWorker.register(swUrl.href, {
+          scope: scopeUrl.pathname
+        })
           .then((registration) => {
-            console.log('ServiceWorker registrado com sucesso no escopo: ', registration.scope);
+            console.log(
+              "[A Role Play] Service Worker registrado:",
+              registration.scope
+            );
           })
           .catch((error) => {
-            console.log('Falha ao registrar o ServiceWorker: ', error);
+            console.error(
+              "[A Role Play] Falha ao registrar Service Worker:",
+              error
+            );
           });
       });
     }
