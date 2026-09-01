@@ -1,25 +1,25 @@
 /* A Role Play — Service Worker
-
-* PWA cache + offline support + Firebase Cloud Messaging.
-* 
-* IMPORTANTE:
-* Este projeto está hospedado em:
-* https://machadomatheus-art.github.io/A-Role-Play/
-* 
-* Todos os caminhos são relativos ao próprio Service Worker,
-* para não interferir com outros projetos hospedados no mesmo domínio.
-  */
+ *
+ * PWA cache + offline support + Firebase Cloud Messaging.
+ *
+ * IMPORTANTE:
+ * Este projeto está hospedado em:
+ * https://machadomatheus-art.github.io/A-Role-Play/
+ *
+ * Todos os caminhos são relativos ao próprio Service Worker,
+ * para não interferir com outros projetos hospedados no mesmo domínio.
+ */
 
 importScripts("https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js");
 importScripts("https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js");
 
 const firebaseConfig = {
-apiKey: "AIzaSyBUg7l99dLX04OrqM_jlb6-58y1A9BB3N8",
-authDomain: "rpg-ee17e.firebaseapp.com",
-projectId: "rpg-ee17e",
-storageBucket: "rpg-ee17e.firebasestorage.app",
-messagingSenderId: "136442258825",
-appId: "1:136442258825:web:b7dadfb6c2d6d3ed5a2d58"
+  apiKey: "AIzaSyBUg7l99dLX04OrqM_jlb6-58y1A9BB3N8",
+  authDomain: "rpg-ee17e.firebaseapp.com",
+  projectId: "rpg-ee17e",
+  storageBucket: "rpg-ee17e.firebasestorage.app",
+  messagingSenderId: "136442258825",
+  appId: "1:136442258825:web:b7dadfb6c2d6d3ed5a2d58"
 };
 
 firebase.initializeApp(firebaseConfig);
@@ -27,18 +27,17 @@ firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
 /*
-
-* Como o SW está em:
-* 
-* /A-Role-Play/sw.js
-* 
-* self.location.pathname permite descobrir automaticamente:
-* 
-* /A-Role-Play/
-* 
-* Assim o mesmo arquivo funciona no GitHub Pages
-* sem usar caminhos absolutos do domínio.
-  */
+ * Como o SW está em:
+ *
+ * /A-Role-Play/sw.js
+ *
+ * self.location.pathname permite descobrir automaticamente:
+ *
+ * /A-Role-Play/
+ *
+ * Assim o mesmo arquivo funciona no GitHub Pages
+ * sem usar caminhos absolutos do domínio.
+ */
 
 const APP_BASE = new URL("./", self.location.href);
 
@@ -47,515 +46,603 @@ const APP_ROOT = APP_BASE.href;
 const INDEX_URL = new URL("index.html", APP_BASE).href;
 
 const ICON_URL = new URL(
-"assets/icons/icon-192.png",
-APP_BASE
+  "assets/icons/icon-192.png",
+  APP_BASE
 ).href;
 
-const CACHE_VERSION = "a-role-play-v4";
+const CACHE_VERSION = "a-role-play-v5";
 
-const RUNTIME_CACHE = "${CACHE_VERSION}-runtime";
+/*
+ * CORREÇÃO:
+ * Antes estava usando aspas normais:
+ *
+ * "${CACHE_VERSION}-runtime"
+ *
+ * Isso transformava literalmente o nome do cache em:
+ *
+ * ${CACHE_VERSION}-runtime
+ *
+ * Agora usamos template literal.
+ */
+
+const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
 const APP_SHELL = [
-APP_ROOT,
-INDEX_URL
+  APP_ROOT,
+  INDEX_URL
 ];
 
 const OFFLINE_URL = INDEX_URL;
 
+
 /* =========================================================
-INSTALL
+   INSTALL
 ========================================================= */
 
 self.addEventListener("install", (event) => {
 
-console.log(
-"[A Role Play] SW instalando:",
-{
-sw: self.location.href,
-appRoot: APP_ROOT,
-index: INDEX_URL
-}
-);
+  console.log(
+    "[A Role Play] SW instalando:",
+    {
+      sw: self.location.href,
+      appRoot: APP_ROOT,
+      index: INDEX_URL
+    }
+  );
 
-event.waitUntil(
+  event.waitUntil(
 
-caches
-  .open(CACHE_VERSION)
+    caches
+      .open(CACHE_VERSION)
 
-  .then((cache) => {
+      .then((cache) => {
 
-    return cache.addAll(APP_SHELL);
+        return cache.addAll(APP_SHELL);
 
-  })
+      })
 
-  .then(() => {
+      .then(() => {
 
-    console.log(
-      "[A Role Play] SW instalado com sucesso."
-    );
+        console.log(
+          "[A Role Play] SW instalado com sucesso."
+        );
 
-    return self.skipWaiting();
+        return self.skipWaiting();
 
-  })
+      })
 
-  .catch((error) => {
+      .catch((error) => {
 
-    console.error(
-      "[A Role Play] ❌ Erro durante instalação do SW:",
-      error
-    );
+        console.error(
+          "[A Role Play] ❌ Erro durante instalação do SW:",
+          error
+        );
 
-    throw error;
+        throw error;
 
-  })
+      })
 
-);
+  );
 
 });
 
+
 /* =========================================================
-ACTIVATE
+   ACTIVATE
 ========================================================= */
 
 self.addEventListener("activate", (event) => {
 
-event.waitUntil(
+  event.waitUntil(
 
-caches
-  .keys()
+    caches
+      .keys()
 
-  .then((keys) => {
+      .then((keys) => {
 
-    return Promise.all(
+        return Promise.all(
 
-      keys
+          keys
 
-        .filter(
-          (key) =>
-            key !== CACHE_VERSION &&
-            key !== RUNTIME_CACHE
-        )
+            .filter(
+              (key) =>
+                key !== CACHE_VERSION &&
+                key !== RUNTIME_CACHE
+            )
 
-        .map((key) => caches.delete(key))
+            .map((key) => caches.delete(key))
 
-    );
+        );
 
-  })
+      })
 
-  .then(() => {
+      .then(() => {
 
-    console.log(
-      "[A Role Play] SW ativado:",
-      self.location.href
-    );
+        console.log(
+          "[A Role Play] SW ativado:",
+          self.location.href
+        );
 
-    return self.clients.claim();
+        return self.clients.claim();
 
-  })
+      })
 
-);
+  );
 
 });
 
+
 /* =========================================================
-MENSAGENS DO APP
+   MENSAGENS DO APP
 ========================================================= */
 
 self.addEventListener("message", (event) => {
 
-if (event.data?.type === "SKIP_WAITING") {
+  if (event.data?.type === "SKIP_WAITING") {
 
-self.skipWaiting();
+    self.skipWaiting();
 
-return;
+    return;
 
-}
+  }
 
-if (event.data?.type === "PING") {
 
-if (event.ports?.[0]) {
+  if (event.data?.type === "PING") {
 
-  event.ports[0].postMessage({
+    if (event.ports?.[0]) {
 
-    ok: true,
+      event.ports[0].postMessage({
 
-    serviceWorker: true,
+        ok: true,
 
-    scriptURL: self.location.href,
+        serviceWorker: true,
 
-    scope: APP_ROOT
+        scriptURL: self.location.href,
 
-  });
+        scope: APP_ROOT
 
-}
+      });
 
-return;
-
-}
-
-/*
-
-* Teste manual de notificação.
-* 
-* Permite testar o SW sem depender do Firebase.
-  */
-
-if (event.data?.type === "TEST_NOTIFICATION") {
-
-event.waitUntil(
-
-  self.registration.showNotification(
-    "A Role Play",
-    {
-      body: "🔔 Service Worker funcionando!",
-      icon: ICON_URL,
-      badge: ICON_URL,
-      data: {
-        link: APP_ROOT
-      }
     }
-  )
 
-);
+    return;
 
-}
+  }
+
+
+  /*
+   * Teste manual de notificação.
+   *
+   * Permite testar o SW sem depender do Firebase.
+   */
+
+  if (event.data?.type === "TEST_NOTIFICATION") {
+
+    event.waitUntil(
+
+      self.registration.showNotification(
+        "A Role Play",
+        {
+
+          body: "🔔 Service Worker funcionando!",
+
+          icon: ICON_URL,
+
+          /*
+           * Não usamos badge.
+           *
+           * Em Android/Firefox, o badge pode acabar
+           * aparecendo como um segundo elemento visual.
+           *
+           * O ícone principal será o ícone do aplicativo.
+           */
+
+          tag: "a-role-play-test",
+
+          renotify: true,
+
+          data: {
+            link: APP_ROOT
+          }
+
+        }
+      )
+
+    );
+
+  }
 
 });
 
+
 /* =========================================================
-FIREBASE CLOUD MESSAGING
+   FIREBASE CLOUD MESSAGING
 ========================================================= */
 
 messaging.onBackgroundMessage((payload) => {
 
-console.log(
-"[A Role Play] 🔔 FCM RECEBIDO PELO SERVICE WORKER:",
-payload
-);
+  console.log(
+    "[A Role Play] 🔔 FCM RECEBIDO PELO SERVICE WORKER:",
+    payload
+  );
 
-const notification =
-payload?.notification || {};
 
-const data =
-payload?.data || {};
+  const notification =
+    payload?.notification || {};
 
-/*
+  const data =
+    payload?.data || {};
 
-* Se o Firebase já enviou um payload de
-* notification, o navegador pode exibi-lo
-* automaticamente.
-* 
-* Como nossa Edge Function envia mensagens
-* data-only para o chat, normalmente cairemos
-* no bloco abaixo.
-  */
 
-if (
-notification.title ||
-notification.body
-) {
+  /*
+   * Se o Firebase já enviou um payload de
+   * notification, o navegador pode exibi-lo
+   * automaticamente.
+   *
+   * Como nossa Edge Function envia mensagens
+   * data-only para o chat, normalmente cairemos
+   * no bloco abaixo.
+   */
 
-return;
+  if (
+    notification.title ||
+    notification.body
+  ) {
 
-}
-
-const title =
-data.title ||
-"A Role Play";
-
-const body =
-data.body ||
-data.message ||
-"Você recebeu uma nova mensagem.";
-
-const link =
-data.link ||
-APP_ROOT;
-
-self.registration.showNotification(
-title,
-{
-
-  body,
-
-  icon: ICON_URL,
-
-  badge: ICON_URL,
-
-  tag:
-    data.tableId
-      ? `a-role-play-table-${data.tableId}`
-      : "a-role-play-message",
-
-  renotify: true,
-
-  data: {
-
-    link,
-
-    tableId:
-      data.tableId || ""
+    return;
 
   }
 
-}
 
-).catch((error) => {
+  /*
+   * TÍTULO DA NOTIFICAÇÃO
+   *
+   * Será o nome da mesa.
+   */
 
-console.error(
-  "[A Role Play] ❌ Falha ao exibir notificação:",
-  error
-);
+  const title =
+    data.title ||
+    "A Role Play";
+
+
+  /*
+   * CORPO
+   *
+   * O formato enviado pela Edge Function será:
+   *
+   * NomeDoJogador: mensagem
+   */
+
+  const body =
+    data.body ||
+    data.message ||
+    "Você recebeu uma nova mensagem.";
+
+
+  /*
+   * Link interno.
+   *
+   * Ele NÃO aparece visualmente na notificação.
+   */
+
+  const link =
+    data.link ||
+    APP_ROOT;
+
+
+  /*
+   * Notificação Android.
+   *
+   * O horário é colocado automaticamente pelo Android.
+   *
+   * Não colocamos URL no body.
+   *
+   * Não usamos badge para evitar o segundo ícone.
+   */
+
+  self.registration.showNotification(
+    title,
+    {
+
+      body,
+
+      icon: ICON_URL,
+
+      tag:
+        data.tableId
+          ? `a-role-play-table-${data.tableId}`
+          : "a-role-play-message",
+
+      renotify: true,
+
+      data: {
+
+        link,
+
+        tableId:
+          data.tableId || "",
+
+        senderUid:
+          data.senderUid || "",
+
+        senderName:
+          data.senderName || ""
+
+      }
+
+    }
+
+  ).catch((error) => {
+
+    console.error(
+      "[A Role Play] ❌ Falha ao exibir notificação:",
+      error
+    );
+
+  });
 
 });
 
-});
 
 /* =========================================================
-CLIQUE NA NOTIFICAÇÃO
+   CLIQUE NA NOTIFICAÇÃO
 ========================================================= */
 
 self.addEventListener(
-"notificationclick",
-(event) => {
+  "notificationclick",
+  (event) => {
 
-event.notification.close();
-
-const target =
-  event.notification.data?.link ||
-  APP_ROOT;
+    event.notification.close();
 
 
-event.waitUntil(
+    const target =
+      event.notification.data?.link ||
+      APP_ROOT;
 
-  clients
-    .matchAll({
-      type: "window",
-      includeUncontrolled: true
-    })
 
-    .then((clientList) => {
+    event.waitUntil(
 
-      for (const client of clientList) {
+      clients
+        .matchAll({
+          type: "window",
+          includeUncontrolled: true
+        })
 
-        if (
-          "focus" in client
-        ) {
+        .then((clientList) => {
 
-          if (
-            "navigate" in client &&
-            target
-          ) {
+          for (const client of clientList) {
 
-            return client
-              .navigate(target)
-              .then(() => client.focus());
+            if (
+              "focus" in client
+            ) {
+
+              if (
+                "navigate" in client &&
+                target
+              ) {
+
+                return client
+                  .navigate(target)
+                  .then(() => client.focus());
+
+              }
+
+              return client.focus();
+
+            }
 
           }
 
-          return client.focus();
 
-        }
+          if (
+            clients.openWindow
+          ) {
 
-      }
+            return clients.openWindow(target);
 
+          }
 
-      if (
-        clients.openWindow
-      ) {
+        })
 
-        return clients.openWindow(target);
+    );
 
-      }
-
-    })
-
+  }
 );
 
-}
-);
 
 /* =========================================================
-FETCH / CACHE
+   FETCH / CACHE
 ========================================================= */
 
 self.addEventListener(
-"fetch",
-(event) => {
+  "fetch",
+  (event) => {
 
-const request =
-  event.request;
-
-
-if (
-  request.method !== "GET"
-) {
-
-  return;
-
-}
+    const request =
+      event.request;
 
 
-const url =
-  new URL(request.url);
+    if (
+      request.method !== "GET"
+    ) {
+
+      return;
+
+    }
 
 
-/*
- * Nunca interceptar recursos externos.
- */
-
-if (
-  url.origin !== self.location.origin
-) {
-
-  return;
-
-}
+    const url =
+      new URL(request.url);
 
 
-/*
- * Navegação.
- */
+    /*
+     * Nunca interceptar recursos externos.
+     */
 
-if (
-  request.mode === "navigate"
-) {
+    if (
+      url.origin !== self.location.origin
+    ) {
 
-  event.respondWith(
+      return;
 
-    fetch(request)
-
-      .then((response) => {
-
-        if (
-          response.ok
-        ) {
-
-          const copy =
-            response.clone();
-
-          caches
-            .open(RUNTIME_CACHE)
-            .then((cache) =>
-              cache.put(request, copy)
-            );
-
-        }
-
-        return response;
-
-      })
-
-      .catch(async () => {
-
-        const cached =
-          (await caches.match(request)) ||
-
-          (await caches.match(INDEX_URL)) ||
-
-          (await caches.match(APP_ROOT));
+    }
 
 
-        return (
-          cached ||
+    /*
+     * Navegação.
+     */
 
-          new Response(
+    if (
+      request.mode === "navigate"
+    ) {
 
-            `<!doctype html>
+      event.respondWith(
+
+        fetch(request)
+
+          .then((response) => {
+
+            if (
+              response.ok
+            ) {
+
+              const copy =
+                response.clone();
+
+
+              caches
+                .open(RUNTIME_CACHE)
+                .then((cache) =>
+                  cache.put(request, copy)
+                );
+
+            }
+
+            return response;
+
+          })
+
+          .catch(async () => {
+
+            const cached =
+              (await caches.match(request)) ||
+
+              (await caches.match(INDEX_URL)) ||
+
+              (await caches.match(APP_ROOT));
+
+
+            return (
+              cached ||
+
+              new Response(
+
+                `<!doctype html>
 
 <html lang="pt-BR">
+
 <head>
 <meta charset="utf-8">
 <title>A Role Play</title>
 </head>
+
 <body style="
 background:#24140f;
 color:#f1dfc1;
 font-family:system-ui;
 text-align:center;
 padding:40px
-"><h1>A Role Play</h1><p>Você está offline.</p></body>
-</html>`,            {
-              headers: {
-                "Content-Type":
-                  "text/html; charset=utf-8"
-              }
-            }
+">
 
-          )
+<h1>A Role Play</h1>
 
-        );
+<p>Você está offline.</p>
 
-      })
+</body>
 
-  );
+</html>`,
 
-  return;
+                {
+                  headers: {
+                    "Content-Type":
+                      "text/html; charset=utf-8"
+                  }
+                }
 
-}
+              )
 
+            );
 
-/*
- * CSS / JS / imagens / fontes.
- */
+          })
 
-if (
-  [
-    "style",
-    "script",
-    "image",
-    "font"
-  ].includes(request.destination)
-) {
+      );
 
-  event.respondWith(
+      return;
 
-    caches
-      .match(request)
-
-      .then((cached) => {
-
-        if (cached) {
-
-          return cached;
-
-        }
+    }
 
 
-        return fetch(request)
+    /*
+     * CSS / JS / imagens / fontes.
+     */
 
-          .then((response) => {
+    if (
+      [
+        "style",
+        "script",
+        "image",
+        "font"
+      ].includes(request.destination)
+    ) {
 
-            if (
-              !response ||
-              !response.ok
-            ) {
+      event.respondWith(
 
-              return response;
+        caches
+          .match(request)
+
+          .then((cached) => {
+
+            if (cached) {
+
+              return cached;
 
             }
 
 
-            const copy =
-              response.clone();
+            return fetch(request)
+
+              .then((response) => {
+
+                if (
+                  !response ||
+                  !response.ok
+                ) {
+
+                  return response;
+
+                }
 
 
-            caches
-              .open(RUNTIME_CACHE)
-              .then((cache) =>
-                cache.put(request, copy)
-              );
+                const copy =
+                  response.clone();
 
 
-            return response;
+                caches
+                  .open(RUNTIME_CACHE)
+                  .then((cache) =>
+                    cache.put(request, copy)
+                  );
 
-          });
 
-      })
+                return response;
 
-  );
+              });
 
-}
+          })
 
-}
+      );
+
+    }
+
+  }
 );
